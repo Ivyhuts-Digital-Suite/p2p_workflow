@@ -1,0 +1,11 @@
+services:
+  mongo:
+    image: mongo:7
+    container_name: p2p-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - p2p-mongo-data:/data/db
+
+volumes:
+  p2p-mongo-data:
