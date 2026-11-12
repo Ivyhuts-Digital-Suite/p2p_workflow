@@ -295,3 +295,10 @@ Build the project for Vercel and list the environment variables it needs.
 - The seed script wipes all P2P data before recreating the demo data, and it refuses to run with `NODE_ENV=production`. To seed a hosted database, run `npm run seed` locally with `MONGO_URI` pointing at it. Do this only when its existing data may be lost.
 - Check git status, commit all the latest changes and fixes with a clean message, and push to `main`.
 
+## Phase 20: Demo login chips on the live site (12 Nov)
+
+- The one-click demo chips (requester, hod.it, hod.ops, procurement, procurement2, store, finance, auditor, vendor1, vendor2, admin; password `Password@123`) must appear on the deployed Vercel site, not only locally.
+- They were hidden because they rendered only in development builds. Production builds must include them too.
+- Optional: setting `VITE_HIDE_DEMO_LOGINS=true` at build time hides them once real users go live.
+- Push the fix to GitHub (`main`) so Vercel redeploys.
+

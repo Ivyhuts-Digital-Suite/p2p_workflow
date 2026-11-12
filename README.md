@@ -20,7 +20,7 @@ npm run dev                       # local MongoDB + API on :5000 + web on :5173 
 npm run seed                      # in a second terminal, once the db is up: demo data (wipes P2P data!)
 ```
 
-Open http://localhost:5173. Every seeded account uses the password `Password@123`, and in development the login page signs in to each one with a one-click chip.
+Open http://localhost:5173. Every seeded account uses the password `Password@123`, and the login page signs in to each one with a one-click chip, locally and on the deployed site. To hide the chips once real users sign in, set `VITE_HIDE_DEMO_LOGINS=true` in the build environment (on Vercel, under Environment Variables) and redeploy.
 
 ```bash
 npm run test:e2e                  # sign-up, RBAC and the full P2P lifecycle, on a throwaway in-memory database

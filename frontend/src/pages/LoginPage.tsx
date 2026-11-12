@@ -72,7 +72,8 @@ export function LoginPage() {
       <p className="muted small">
         No account yet? <Link to="/signup">Sign up</Link>
       </p>
-      {import.meta.env.DEV && (
+      {/* Shown in every build, including Vercel. Set VITE_HIDE_DEMO_LOGINS=true at build time to hide them for real users. */}
+      {import.meta.env.VITE_HIDE_DEMO_LOGINS !== 'true' && (
         <div className="demo-accounts">
           <p className="muted small">One-click demo sign-in (password: {DEMO_PASSWORD})</p>
           <div className="chips">
