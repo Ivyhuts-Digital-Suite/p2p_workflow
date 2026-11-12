@@ -14,7 +14,7 @@ Prerequisite: Node 20+. **You don't need to install MongoDB.** `npm run dev` sta
 **If the database is down:** the API stays up and answers `503` with a clear message, `GET /api/health` reports `db: down`, and it reconnects by itself once MongoDB is back.
 
 ```bash
-npm install                       # installs both workspaces
+npm install                       # installs everything from the one root package.json
 cp backend/.env.example backend/.env
 npm run dev                       # local MongoDB + API on :5000 + web on :5173 (proxied /api)
 npm run seed                      # in a second terminal, once the db is up: demo data (wipes P2P data!)
@@ -64,7 +64,8 @@ The login and sign-up pages use one role card per team. A selected card must mat
 
 ```
 p2p_workflow/
-├── package.json                 # npm workspaces + root scripts (dev, build, seed, typecheck)
+├── package.json                 # the only package.json: all dependencies and scripts (dev, build, seed, typecheck)
+├── vercel.json, api/index.ts    # Vercel: one project from the repo root; api/index.ts serves the backend
 ├── docker-compose.yml           # local MongoDB
 ├── backend/
 │   └── src/

@@ -277,3 +277,15 @@ Build the project for Vercel and list the environment variables it needs.
 - Remove only the Vercel deployment files: `vercel.json`, `backend/src/vercel.ts`, and any build overrides or build output added for Vercel.
 - Do not change core backend logic, frontend routing, database connections or workflow files.
 - The project must stay clean and fully working for local development (`npm run dev`).
+
+## Phase 18: One root directory for Vercel (12 Nov)
+
+- Vercel's Git import must detect a single deployable directory, the repository root, instead of separate `frontend` and `backend` ones.
+- Use one `package.json` at the root with every dependency and script. `backend/` and `frontend/` keep their code but have no `package.json` of their own.
+- Local commands stay the same: `npm run dev`, `seed`, `build`, `typecheck` and `test:e2e`.
+- Deploy from the root as one Vercel project:
+  - `vercel.json` builds the frontend.
+  - `api/index.ts` serves the backend under `/api`, connecting to MongoDB on the first request.
+  - Client routes fall back to `index.html`.
+- Do not change backend logic, frontend routing or database code.
+
