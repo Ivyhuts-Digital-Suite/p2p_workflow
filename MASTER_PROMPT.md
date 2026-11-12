@@ -241,3 +241,39 @@ It restates the Phase 14 requirements:
 3. Step labels clearly separate pending from completed.
 
 Also: when a confirm dialog has its own Cancel button for closing it, the confirm button must have a different name. For example, cancelling a PR asks the user to confirm with **"Cancel PR"**.
+
+## Phase 16: Deploy on Vercel (12 Nov)
+
+**[Removed in Phase 17: all Vercel-specific setup was taken out. Do not build this phase.]**
+
+Build the project for Vercel and list the environment variables it needs.
+
+**Deployment shape**
+- Use one Vercel project with two services: the Vite frontend and the Express backend.
+- `/api/*` goes to the backend. Every other path serves the frontend.
+- Client routes such as `/requisitions` fall back to `index.html`, so reloading or opening a deep link works.
+
+**Backend entry for Vercel**
+- The backend gets its own serverless entry file, `backend/src/vercel.ts`.
+- It exports the Express app and connects to MongoDB on the first request, reusing that connection afterwards.
+- It runs the startup migrations once per instance.
+- If MongoDB can't be reached, the request gets the usual 503 and the next request tries to connect again.
+- Local development and `npm start` keep using `server.ts`, unchanged.
+
+**Build**
+- On Vercel, the backend's build step only typechecks.
+- That way Vercel bundles from the serverless entry instead of picking up a compiled `dist/app.js`.
+
+**Environment variables**
+- `MONGO_URI` must point at a hosted MongoDB, such as MongoDB Atlas, that accepts connections from Vercel.
+- `JWT_SECRET` is required.
+- `INTERNAL_SIGNUP_CODE` allows staff signups in production.
+- `BANK_API_URL`, `BANK_API_KEY` and `BANK_WEBHOOK_SECRET` enable real payments; without them, payment release is refused in production.
+- `CLIENT_ORIGIN` should be the site's address.
+- The rest are optional and have defaults.
+
+## Phase 17: Remove the Vercel setup (12 Nov)
+
+- Remove only the Vercel deployment files: `vercel.json`, `backend/src/vercel.ts`, and any build overrides or build output added for Vercel.
+- Do not change core backend logic, frontend routing, database connections or workflow files.
+- The project must stay clean and fully working for local development (`npm run dev`).
