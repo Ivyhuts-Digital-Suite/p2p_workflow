@@ -302,3 +302,16 @@ Build the project for Vercel and list the environment variables it needs.
 - Optional: setting `VITE_HIDE_DEMO_LOGINS=true` at build time hides them once real users go live.
 - Push the fix to GitHub (`main`) so Vercel redeploys.
 
+## Phase 21: Debug "The database is temporarily unavailable" on Vercel (12 Nov)
+
+- Check the backend's connection error handling and how `MONGO_URI` is read from the environment.
+- Make `/api/health` report database connectivity in enough detail to debug a live deployment:
+  - the connection state;
+  - whether `MONGO_URI` is set;
+  - the host and database, without credentials;
+  - the last connection error, with a hint for the likely fix;
+  - whether `JWT_SECRET` is set.
+- Read `MONGO_URI` safely: trim spaces, line breaks and wrapping quotes.
+- On Vercel, never fall back to the local database address or the development JWT secret. Report a missing value instead.
+- Push the fix to `main`.
+

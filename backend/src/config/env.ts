@@ -4,20 +4,36 @@ dotenv.config();
 
 const nodeEnv = process.env.NODE_ENV ?? 'development';
 
-function required(key: string, devFallback?: string): string {
-  const value = process.env[key] ?? (nodeEnv === 'production' ? undefined : devFallback);
+function required(key: string, devFallback?: string, fromEnv = process.env[key]): string {
+  const value = fromEnv ?? (nodeEnv === 'production' ? undefined : devFallback);
   if (!value) {
     throw new Error(`Missing required environment variable: ${key}`);
   }
   return value;
 }
 
+/** Vercel sets VERCEL=1 in its builds and functions. */
+const onVercel = !!process.env.VERCEL;
+
+/** Trims spaces, line breaks and wrapping quotes that are easy to paste into a hosting dashboard by mistake. */
+const cleanUri = (value?: string) =>
+  value
+    ?.trim()
+    .replace(/^(['"])(.*)\1$/, '$2')
+    .trim() || undefined;
+const mongoUriFromEnv = cleanUri(process.env.MONGO_URI);
+
 export const env = {
   nodeEnv,
   isProduction: nodeEnv === 'production',
+  onVercel,
   port: Number(process.env.PORT ?? 5000),
-  mongoUri: required('MONGO_URI', 'mongodb://127.0.0.1:27017/p2p'),
-  jwtSecret: required('JWT_SECRET', 'dev-only-insecure-secret'),
+  // On Vercel there is no local MongoDB to fall back to, so a missing MONGO_URI is reported by /api/health instead.
+  mongoUri: onVercel ? (mongoUriFromEnv ?? '') : required('MONGO_URI', 'mongodb://127.0.0.1:27017/p2p', mongoUriFromEnv),
+  /** Whether MONGO_URI came from the environment rather than the local development default */
+  mongoUriFromEnv: !!mongoUriFromEnv,
+  // Never the public development secret on Vercel: without JWT_SECRET, sign-in fails and /api/health says so.
+  jwtSecret: onVercel ? (process.env.JWT_SECRET ?? '') : required('JWT_SECRET', 'dev-only-insecure-secret'),
   jwtExpiresIn: process.env.JWT_EXPIRES_IN ?? '1d',
   clientOrigin: process.env.CLIENT_ORIGIN ?? 'http://localhost:5173',
   companyGstin: process.env.COMPANY_GSTIN ?? '27AABCU9603R1ZM',

@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { isDatabaseConnected } from '../config/db';
+import { databaseStatus, isDatabaseConnected } from '../config/db';
+import { env } from '../config/env';
 import adminRoutes from '../modules/admin/admin.routes';
 import auditRoutes from '../modules/audit/audit.routes';
 import authRoutes from '../modules/auth/auth.routes';
@@ -18,7 +19,15 @@ const router = Router();
 
 router.get('/health', (_req, res) => {
   const up = isDatabaseConnected();
-  res.status(up ? 200 : 503).json({ status: up ? 'ok' : 'degraded', db: up ? 'up' : 'down', time: new Date() });
+  res.status(up ? 200 : 503).json({
+    status: up ? 'ok' : 'degraded',
+    db: up ? 'up' : 'down',
+    time: new Date(),
+    // Enough to debug a hosted deployment without its logs; no credentials or secrets.
+    database: databaseStatus(),
+    jwtSecretSet: !!env.jwtSecret,
+    environment: { nodeEnv: env.nodeEnv, vercel: env.onVercel },
+  });
 });
 
 router.use('/auth', authRoutes);

@@ -239,6 +239,16 @@ GET /treasury/payments|payments/my-approvals
 POST /treasury/payments/:id/approve|reject|release|retry|check-status   POST /treasury/payments/webhook
 ```
 
+## Checking a deployment
+
+Open `/api/health` on the deployed site. With `"db":"up"` the backend is connected. With `"db":"down"`, the `database` block tells you why:
+
+- `mongoUriSet`: whether `MONGO_URI` is set in this environment. On Vercel, set it for both Production and Preview if you use previews, then redeploy.
+- `host` and `database`: where the server is connecting, without credentials.
+- `lastError.message` and `lastError.hint`: the driver's error and the most likely fix, such as Atlas Network Access not allowing `0.0.0.0/0`, a wrong password, or a host name that doesn't exist.
+
+`jwtSecretSet: false` means `JWT_SECRET` is missing, so sign-in is refused. On Vercel the server never falls back to the local database or the development secret.
+
 ## Production notes / next steps
 
 - **Transactions:** multi-document updates (GRN + PO + inventory, payment + invoice + budget) are done in a careful order, with conditional updates and optimistic concurrency. On a MongoDB replica set, wrap them in `session.withTransaction()`.
