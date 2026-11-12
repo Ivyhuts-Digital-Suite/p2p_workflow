@@ -289,3 +289,9 @@ Build the project for Vercel and list the environment variables it needs.
   - Client routes fall back to `index.html`.
 - Do not change backend logic, frontend routing or database code.
 
+## Phase 19: Demo accounts on the live database, and push to main (12 Nov)
+
+- Check the seed script and make sure every demo test account works on the live (hosted) database. These are requester, hod.it, hod.ops, procurement, procurement2, store, finance, auditor, admin, vendor1 and vendor2, all with password `Password@123`.
+- The seed script wipes all P2P data before recreating the demo data, and it refuses to run with `NODE_ENV=production`. To seed a hosted database, run `npm run seed` locally with `MONGO_URI` pointing at it. Do this only when its existing data may be lost.
+- Check git status, commit all the latest changes and fixes with a clean message, and push to `main`.
+
