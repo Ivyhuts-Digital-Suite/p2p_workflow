@@ -35,6 +35,7 @@ export const PO_STATUS = {
   APPROVED: 'APPROVED',
   REJECTED: 'REJECTED',
   ISSUED: 'ISSUED',
+  /** Legacy: vendors once acknowledged POs. Kept so older POs still read correctly. */
   ACKNOWLEDGED: 'ACKNOWLEDGED',
   PARTIALLY_RECEIVED: 'PARTIALLY_RECEIVED',
   RECEIVED: 'RECEIVED',
@@ -53,8 +54,9 @@ export const PO_INVOICEABLE_STATUSES: PoStatus[] = [
   PO_STATUS.PARTIALLY_RECEIVED,
   PO_STATUS.RECEIVED,
 ];
-/** POs a vendor can invoice: accepted by acknowledging them, or by delivering against them. */
+/** POs a vendor can invoice: from the moment the PO is issued to them. ACKNOWLEDGED is kept for older POs. */
 export const PO_VENDOR_INVOICEABLE_STATUSES: PoStatus[] = [
+  PO_STATUS.ISSUED,
   PO_STATUS.ACKNOWLEDGED,
   PO_STATUS.PARTIALLY_RECEIVED,
   PO_STATUS.RECEIVED,

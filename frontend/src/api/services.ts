@@ -1,4 +1,6 @@
 import type {
+  ChatUnread,
+  VendorThread,
   AuditLogEntry,
   AwardRecord,
   BankDetails,
@@ -76,8 +78,6 @@ export const requisitionApi = {
   approve: (id: string, remarks?: string) => data<Requisition>(api.post(`/requisitions/${id}/approve`, { remarks })),
   reject: (id: string, remarks: string) => data<Requisition>(api.post(`/requisitions/${id}/reject`, { remarks })),
   cancel: (id: string, reason: string) => data<Requisition>(api.post(`/requisitions/${id}/cancel`, { reason })),
-  deactivate: (id: string, reason: string) => data<Requisition>(api.post(`/requisitions/${id}/deactivate`, { reason })),
-  reactivate: (id: string) => data<Requisition>(api.post(`/requisitions/${id}/reactivate`)),
   update: (id: string, body: { title: string; department: string; justification?: string; priority: string; items: PrItem[]; isEmergency?: boolean; emergencyReason?: string }) =>
     data<Requisition>(api.patch(`/requisitions/${id}`, body)),
   journey: (id: string) => data<JourneyTrack>(api.get(`/requisitions/${id}/journey`)),
@@ -141,9 +141,7 @@ export const poApi = {
   approve: (id: string, remarks?: string) => data<PurchaseOrder>(api.post(`/purchase-orders/${id}/approve`, { remarks })),
   reject: (id: string, remarks: string) => data<PurchaseOrder>(api.post(`/purchase-orders/${id}/reject`, { remarks })),
   issue: (id: string) => data<PurchaseOrder>(api.post(`/purchase-orders/${id}/issue`)),
-  acknowledge: (id: string) => data<PurchaseOrder>(api.post(`/purchase-orders/${id}/acknowledge`)),
   cancel: (id: string, reason: string) => data<PurchaseOrder>(api.post(`/purchase-orders/${id}/cancel`, { reason })),
-  shortClose: (id: string, reason: string) => data<PurchaseOrder>(api.post(`/purchase-orders/${id}/short-close`, { reason })),
 };
 
 export const grnApi = {
@@ -184,6 +182,16 @@ export const serviceEntryApi = {
 
 export const catalogApi = {
   search: (q: string) => data<CatalogItem[]>(api.get('/catalog/items', { params: { q } })),
+};
+
+/** Unread badges, and vendor conversations: a vendor's private line to Procurement on an RFQ. */
+export const chatApi = {
+  unread: () => data<ChatUnread>(api.get('/chat/unread')),
+  vendorThreads: (rfqId: string) => data<VendorThread[]>(api.get(`/chat/rfqs/${rfqId}/vendors`)),
+  vendorMessages: (rfqId: string, vendorId: string) => data<PrMessage[]>(api.get(`/chat/rfqs/${rfqId}/vendors/${vendorId}/messages`)),
+  sendToVendor: (rfqId: string, vendorId: string, text: string) => data<PrMessage>(api.post(`/chat/rfqs/${rfqId}/vendors/${vendorId}/messages`, { text })),
+  myMessages: (rfqId: string) => data<PrMessage[]>(api.get(`/chat/rfqs/${rfqId}/messages`)),
+  sendToBuyer: (rfqId: string, text: string) => data<PrMessage>(api.post(`/chat/rfqs/${rfqId}/messages`, { text })),
 };
 
 export const journeyApi = {

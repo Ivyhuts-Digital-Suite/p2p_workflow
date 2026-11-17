@@ -55,13 +55,17 @@ export interface JourneyTrack {
   id: string;
   reference: string;
   title: string;
+  /** Shown under its own label: a PR's justification, or the RFQ description behind a PO */
+  description?: string;
   steps: JourneyStep[];
   pendingAt?: PendingAt;
   message: string;
   /** True when the current step is the caller's to take */
   yourAction: boolean;
-  /** The PR behind this track, for its conversation. Not on vendor tracks: vendors don't see PRs. */
+  /** The PR behind this track, for its conversation. On a vendor track only once their PO is issued to them. */
   prId?: string;
+  /** The RFQ behind this track, for the vendor conversations on it */
+  rfqId?: string;
   startedAt: Date;
 }
 
@@ -90,10 +94,8 @@ const STEP_WORDS: Record<string, [string, string]> = {
   'Technical evaluation': ['Technical evaluation completed', 'Waiting for the technical evaluation'],
   'Vendor selected': ['Vendor selected', 'Waiting for Procurement to select a vendor'],
   'Emergency PO': ['Emergency PO raised', 'Waiting for Procurement to buy directly'],
-  'PO approval': ['PO approval completed', 'Waiting for PO approval'],
-  'PO issued': ['PO issued to the vendor', 'Waiting for Procurement to issue the PO'],
-  'Vendor acknowledgement': ['Vendor acknowledged the PO', 'Waiting for the vendor to acknowledge the PO'],
-  'Acknowledge PO': ['You acknowledged the PO', 'Waiting for you to acknowledge the PO'],
+  'PO generated': ['PO generated and issued to the vendor', 'Waiting for Procurement to generate the PO'],
+  'PO received': ['PO received', 'Waiting for the buyer to issue the PO'],
   'Goods receipt & inspection': ['Goods received and inspected', 'Waiting for the Store to receive and inspect the goods'],
   'Service sign-off': ['Service sign-off completed', 'Waiting for the HOD to sign off the service'],
   'Commissioning sign-off': ['Commissioning sign-off completed', 'Waiting for the HOD to sign off commissioning'],
@@ -120,7 +122,7 @@ function stepWords(step: RawStep): [string, string] {
 }
 
 /** The first unfinished step is the current one: every step after it is locked until it completes. */
-function toTrack(id: string, reference: string, title: string, raw: RawStep[], user: AuthUser, finished: string, startedAt: Date): JourneyTrack {
+function toTrack(id: string, reference: string, title: string, raw: RawStep[], user: AuthUser, finished: string, startedAt: Date, description?: string): JourneyTrack {
   const currentIndex = raw.findIndex((s) => !s.done);
   const current = raw[currentIndex];
   const steps = raw.map((s, index): JourneyStep => {
@@ -137,6 +139,7 @@ function toTrack(id: string, reference: string, title: string, raw: RawStep[], u
     id,
     reference,
     title,
+    description: description?.trim() || undefined,
     steps,
     pendingAt: current?.blocked ? undefined : current?.owner,
     message,
@@ -298,29 +301,23 @@ function sourcingSteps(rfq: RfqDocument | undefined, at: Directory, emergency: b
   return steps;
 }
 
-/** An emergency PO skips approval beforehand: Finance ratifies it later instead. */
-function orderSteps(po: PurchaseOrderDocument | undefined, at: Directory, emergency: boolean): RawStep[] {
-  const nextApprover = po?.approvals.find((a) => a.status === 'PENDING');
-  const beyond = (statuses: string[]) => !!po && !statuses.includes(po.status);
-  const approval: RawStep[] = emergency
-    ? []
-    : [
-        {
-          label: 'PO approval',
-          kind: 'Approval',
-          done: beyond([PO_STATUS.PENDING_APPROVAL, PO_STATUS.REJECTED]),
-          owner: at(nextApprover?.role ?? ROLES.PROCUREMENT, po?.department),
-          blocked: po?.status === PO_STATUS.REJECTED ? 'PO rejected at approval' : undefined,
-        },
-      ];
+/**
+ * One step from the vendor selection to a PO the vendor and Store can act on. Within Procurement's authority
+ * the PO is approved and issued the moment the vendor is selected. Above it, the step waits on the HOD or
+ * Finance level that is still pending. An emergency PO is issued at once and ratified by Finance later.
+ */
+function orderSteps(po: PurchaseOrderDocument | undefined, at: Directory): RawStep[] {
+  const next = po?.status === PO_STATUS.PENDING_APPROVAL ? po.approvals.find((a) => a.status === 'PENDING') : undefined;
+  const generated = !!po && !([PO_STATUS.PENDING_APPROVAL, PO_STATUS.REJECTED, PO_STATUS.APPROVED] as string[]).includes(po.status);
+  const approver = next ? activeRole(next.role) : undefined;
   return [
-    ...approval,
-    { label: 'PO issued', kind: 'Task', done: beyond([PO_STATUS.PENDING_APPROVAL, PO_STATUS.REJECTED, PO_STATUS.APPROVED]), owner: at(ROLES.PROCUREMENT) },
     {
-      label: 'Vendor acknowledgement',
-      kind: 'Task',
-      done: beyond([PO_STATUS.PENDING_APPROVAL, PO_STATUS.REJECTED, PO_STATUS.APPROVED, PO_STATUS.ISSUED]),
-      owner: at(ROLES.VENDOR),
+      label: 'PO generated',
+      kind: next ? 'Approval' : 'Task',
+      done: generated,
+      owner: next ? at(next.role, po?.department) : at(ROLES.PROCUREMENT),
+      blocked: po?.status === PO_STATUS.REJECTED ? 'PO rejected at approval' : undefined,
+      note: approver ? `PO approval pending: above Procurement authority, waiting for ${TEAM_WORD[approver] ?? approver}` : undefined,
     },
   ];
 }
@@ -365,7 +362,7 @@ function poTrack(po: PurchaseOrderDocument, pr: PurchaseRequisitionDocument | un
   const steps: RawStep[] = [
     ...(pr ? requisitionSteps(pr, at) : []),
     ...sourcingSteps(rfq, at, po.isEmergency),
-    ...orderSteps(po, at, po.isEmergency),
+    ...orderSteps(po, at),
     ...deliveryAndPaymentSteps(po, records, at),
   ];
   if (pr?.isEmergency && pr.ratification?.status !== RATIFICATION_STATUS.RATIFIED) {
@@ -378,16 +375,18 @@ function poTrack(po: PurchaseOrderDocument, pr: PurchaseRequisitionDocument | un
       blocked: pr.ratification?.status === RATIFICATION_STATUS.REJECTED ? 'Finance refused to ratify this emergency purchase: it cannot be paid' : undefined,
     });
   }
-  const items = po.items.map((i) => i.description).join(', ');
-  return { ...toTrack(po._id.toString(), po.poNumber, items, steps, user, 'Complete', createdAt(po)), prId: pr?._id.toString() };
+  // A PO's title is its RFQ title; its description the RFQ description, or the requisition's justification.
+  const title = rfq?.title || pr?.title || po.poNumber;
+  const description = rfq?.description || pr?.justification;
+  return { ...toTrack(po._id.toString(), po.poNumber, title, steps, user, 'Complete', createdAt(po), description), prId: pr?._id.toString(), rfqId: po.rfq.toString() };
 }
 
 function prTrack(pr: PurchaseRequisitionDocument, rfq: RfqDocument | undefined, at: Directory, user: AuthUser) {
-  const steps = [...requisitionSteps(pr, at), ...sourcingSteps(rfq, at, pr.isEmergency), ...orderSteps(undefined, at, pr.isEmergency), ...stepsAfterOrder(pr, at)];
+  const steps = [...requisitionSteps(pr, at), ...sourcingSteps(rfq, at, pr.isEmergency), ...orderSteps(undefined, at), ...stepsAfterOrder(pr, at)];
   if (pr.status === PR_STATUS.CANCELLED) {
     steps[0] = { ...steps[0], done: false, blocked: `Cancelled: ${pr.cancellation?.reason ?? 'no reason given'}` };
   }
-  return { ...toTrack(pr._id.toString(), pr.prNumber, pr.title, steps, user, 'Complete', createdAt(pr)), prId: pr._id.toString() };
+  return { ...toTrack(pr._id.toString(), pr.prNumber, pr.title, steps, user, 'Complete', createdAt(pr), pr.justification), prId: pr._id.toString(), rfqId: pr.rfq?.toString() };
 }
 
 /** The full track for one requisition, through its PO once there is one. The caller has already been allowed to see the PR. */
@@ -412,7 +411,7 @@ async function internalTracks(user: AuthUser): Promise<JourneyTrack[]> {
 
   const openPrs: PurchaseRequisitionDocument[] = prScope
     ? await PurchaseRequisition.find({
-        $and: [prScope, { isActive: true, status: { $in: [PR_STATUS.DRAFT, PR_STATUS.SUBMITTED, PR_STATUS.REJECTED, PR_STATUS.APPROVED, PR_STATUS.SOURCING] } }],
+        $and: [prScope, { status: { $in: [PR_STATUS.DRAFT, PR_STATUS.SUBMITTED, PR_STATUS.REJECTED, PR_STATUS.APPROVED, PR_STATUS.SOURCING] } }],
       })
         .sort({ createdAt: -1 })
         .limit(30)
@@ -470,7 +469,7 @@ async function vendorTracks(user: AuthUser): Promise<JourneyTrack[]> {
       { label: 'Bidding closed', kind: 'Process', done: !open, note: 'Bidding is open. You can revise your bid until it closes.' },
     ];
     if (!won) {
-      tracks.push(toTrack(key, rfq.rfqNumber, rfq.title, steps, user, 'Bidding has closed. The buyer contacts the selected vendor directly.', createdAt(rfq)));
+      tracks.push({ ...toTrack(key, rfq.rfqNumber, rfq.title, steps, user, 'Bidding has closed. The buyer contacts the selected vendor directly.', createdAt(rfq), rfq.description), rfqId: key });
       continue;
     }
 
@@ -478,12 +477,13 @@ async function vendorTracks(user: AuthUser): Promise<JourneyTrack[]> {
     if (po && PO_PAST_STATUSES.includes(po.status)) continue;
     const issued = !!po && ![PO_STATUS.PENDING_APPROVAL, PO_STATUS.APPROVED, PO_STATUS.REJECTED].includes(po.status as 'APPROVED');
     steps.push({ label: 'Selected by the buyer', kind: 'Task', done: true });
-    steps.push({ label: 'PO issued', kind: 'Process', done: issued, owner: at(ROLES.PROCUREMENT) });
+    steps.push({ label: 'PO received', kind: 'Process', done: issued, owner: at(ROLES.PROCUREMENT) });
     if (po && issued) {
-      steps.push({ label: 'Acknowledge PO', kind: 'Task', done: po.status !== PO_STATUS.ISSUED, owner: at(ROLES.VENDOR) });
       steps.push(...deliveryAndPaymentSteps(po, recordsFor(po), at));
     }
-    tracks.push(toTrack(key, issued && po ? po.poNumber : rfq.rfqNumber, rfq.title, steps, user, 'Complete', createdAt(rfq)));
+    // Once their PO is issued, the vendor joins the order's conversation (the PR behind the PO).
+    const orderPr = issued && po && po.status !== PO_STATUS.CANCELLED ? po.requisitions[0]?.toString() : undefined;
+    tracks.push({ ...toTrack(key, issued && po ? po.poNumber : rfq.rfqNumber, rfq.title, steps, user, 'Complete', createdAt(rfq), rfq.description), rfqId: key, prId: orderPr });
   }
   return mostRelevant(tracks);
 }

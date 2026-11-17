@@ -25,6 +25,7 @@ export function PrDetail({ pr }: { pr: Requisition }) {
         <thead>
           <tr>
             <th>Item code</th>
+            <th>Product title</th>
             <th>Description</th>
             <th>Type</th>
             <th className="num">Qty</th>
@@ -36,6 +37,7 @@ export function PrDetail({ pr }: { pr: Requisition }) {
           {pr.items.map((i, index) => (
             <tr key={i._id ?? index}>
               <td className="mono">{i.itemCode ?? '-'}</td>
+              <td>{i.title || <span className="muted">-</span>}</td>
               <td>{i.description}</td>
               <td>{ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}</td>
               <td className="num">
@@ -47,7 +49,7 @@ export function PrDetail({ pr }: { pr: Requisition }) {
           ))}
         </tbody>
       </table>
-      <PrChat prId={pr._id} prNumber={pr.prNumber} />
+      <PrChat prId={pr._id} prNumber={pr.prNumber} vendorCanRead={!!journey.data?.steps.some((s) => s.label === 'PO generated' && s.state === 'done')} />
     </div>
   );
 }

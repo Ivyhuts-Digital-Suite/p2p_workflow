@@ -4,6 +4,8 @@ import { ESCALATION_STATUS, EscalationStatus, ITEM_TYPE, ItemType, LICENCE_TYPES
 export interface IRfqItem {
   _id: Types.ObjectId;
   itemCode?: string;
+  /** Product title, shown as "title x quantity". Optional: older lines have none and show the description. */
+  title?: string;
   description: string;
   quantity: number;
   uom: string;
@@ -65,6 +67,7 @@ export type RfqDocument = HydratedDocument<IRfq>;
 
 const rfqItemSchema = new Schema<IRfqItem>({
   itemCode: String,
+  title: String,
   description: { type: String, required: true },
   quantity: { type: Number, required: true, min: 0.0001 },
   uom: { type: String, default: 'EA' },

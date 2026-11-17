@@ -11,12 +11,12 @@ import type { Role } from '../types';
 
 const ROLE_GUIDE: Record<Role, string[]> = {
   REQUESTER: ['Raise purchase requisitions against your department budget', 'Submit drafts for HOD approval and track their status', 'Record completed services for your HOD to accept'],
-  HOD: ['Approve or reject PRs from your department (commits budget)', 'Cancel or deactivate PRs', 'Approve POs and high-value payments at the HOD level', 'Accept service and commissioning sign-offs'],
-  PROCUREMENT: ['Turn approved PRs into RFQs and invite vendors', 'Review bids technically, then select a vendor on price (a non-L1 choice needs a written justification)', 'Issue POs, verify vendor licences and short-close part-delivered POs'],
+  HOD: ['Approve or reject PRs from your department (commits budget)', 'Cancel PRs', 'Approve POs and high-value payments at the HOD level', 'Accept service and commissioning sign-offs'],
+  PROCUREMENT: ['Turn approved PRs into RFQs and invite vendors', 'Review bids technically if needed, then select a vendor on price (a non-L1 choice needs a written justification)', 'Selecting a vendor generates the PO: within your authority it is approved and issued at once', 'Verify vendor licences'],
   STORE: ['Count boxes and inspect quality and damage on arrival', 'Post the Goods Receipt Note with batch, expiry and serial numbers: what you accept enters stock', 'Send rejected goods back on a return note'],
   FINANCE: ['Review the 3-way match (PO vs GRN vs Invoice, 2% price tolerance), decide exceptions and record debit and credit notes', 'Book liability, then verify GSTIN, PAN and TDS', 'Release payments, and retry or check any the bank has not confirmed', 'Decide budget escalations and emergency ratifications, and final DoA approval for high-value POs and PRs'],
   AUDITOR: ['Read every module, the audit trail, match logs and compliance records', 'You cannot approve orders or release payments'],
-  VENDOR: ['Add your bank details and licences under Company Profile so Procurement can approve you', 'Bid on RFQs you are invited to', 'Acknowledge issued POs and submit invoices once goods are accepted'],
+  VENDOR: ['Add your bank details and licences under Company Profile so Procurement can approve you', 'Bid on RFQs you are invited to', 'See the POs awarded to you and submit invoices against them'],
   ADMIN: ['Oversight of every module', 'Manage users, departments, budgets and DoA rules under Administration'],
 };
 

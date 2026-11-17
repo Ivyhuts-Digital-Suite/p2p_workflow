@@ -10,6 +10,8 @@ import { useAction, useApi } from '../../hooks/useApi';
 import type { Bid, BudgetCheck, Rfq } from '../../types';
 import { formatDateTime, formatMoney } from '../../utils/format';
 
+const lineName = (line: { title?: string; description?: string }) => line.title?.trim() || line.description || '-';
+
 const GST_RATES = [0, 5, 12, 18, 28];
 
 /** Confirms a vendor selection inline: the price, any justification, and any budget overrun. */
@@ -42,7 +44,10 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
         overrunReason: overrunReason || undefined,
       });
       if (result.poError) setError(result.poError);
-      else toast(`${bid.vendor.companyName} selected. ${result.po?.poNumber} created and sent for approval.`);
+      else if (result.po?.status === 'PENDING_APPROVAL') {
+        const next = result.po.approvals.find((a) => a.status === 'PENDING');
+        toast(`${bid.vendor.companyName} selected. ${result.po.poNumber} generated; it is above your authority, so it is waiting for ${next?.role ?? 'approval'}.`);
+      } else toast(`${bid.vendor.companyName} selected. ${result.po?.poNumber} generated, approved and issued to the vendor.`);
       await onDone();
       if (!result.poError) onClose();
     } catch (err) {
@@ -75,8 +80,8 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
         <ErrorBanner message={error} onClose={() => setError(null)} />
         <ul className="item-list">
           {bid.items.map((line) => (
-            <li key={line.rfqItem}>
-              {line.description} × {line.quantity} {line.uom}
+            <li key={line.rfqItem} title={line.description}>
+              <strong>{lineName(line)}</strong> × {line.quantity} {line.uom}
             </li>
           ))}
         </ul>
@@ -124,7 +129,7 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
             <textarea rows={2} value={escalationReason} onChange={(e) => setEscalationReason(e.target.value)} minLength={10} />
           </label>
         ))}
-        <p className="muted small">Selecting this vendor generates the purchase order and sends it for approval.</p>
+        <p className="muted small">Selecting this vendor generates the purchase order. Within your DoA authority it is approved and issued at once; above it, it goes to the HOD or Finance.</p>
         <div className="form-footer">
           <div className="spacer" />
           <button type="button" className="btn btn-ghost" onClick={onClose}>
@@ -189,11 +194,11 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
       {sealed && (
         <div className="alert alert-info">
           <span>
-            Two-envelope tender: prices stay sealed until every bid has a technical review.
-            {biddingEnded && unreviewed > 0 ? ` ${unreviewed} still to review.` : ''}
+            Two-envelope tender: prices stay sealed until you open the financials. The technical review is optional: disqualify a bid that fails the specification, and it is left out of the ranking.
+            {biddingEnded && unreviewed > 0 ? ` ${unreviewed} not reviewed.` : ''}
           </span>
           {canManage && biddingEnded && (
-            <button className="btn btn-sm btn-primary" disabled={action.busy || unreviewed > 0} onClick={() => void action.run(() => sourcingApi.openFinancials(rfq._id), 'Financials opened. Qualified bids are now ranked.')}>
+            <button className="btn btn-sm btn-primary" disabled={action.busy} onClick={() => void action.run(() => sourcingApi.openFinancials(rfq._id), 'Financials opened. Bids that were not disqualified are now ranked.')}>
               Open financials
             </button>
           )}
@@ -201,7 +206,7 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
       )}
       {!sealed && (
         <p className="muted small">
-          Bids are ranked by lowest pre-tax price, and only technically qualified bids are ranked. Choosing a vendor other than L1 needs a written justification, kept in the audit trail.
+          Bids are ranked by lowest pre-tax price; disqualified bids are left out. Choosing a vendor other than L1 needs a written justification, kept in the audit trail.
         </p>
       )}
       {!bids?.length ? (
@@ -235,8 +240,8 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
                 <td>
                   <ul className="item-list">
                     {bid.items.map((line) => (
-                      <li key={line.rfqItem}>
-                        {line.description} × {line.quantity} {line.uom}
+                      <li key={line.rfqItem} title={line.description}>
+                        <strong>{lineName(line)}</strong> × {line.quantity} {line.uom}
                         {!bid.pricesSealed && (
                           <span className="muted">
                             {' '}

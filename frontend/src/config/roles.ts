@@ -33,14 +33,14 @@ export const ROLE_CARDS: RoleCardConfig[] = [
     fullName: 'Procurement & Sourcing Team',
     roles: ['PROCUREMENT'],
     guide: 'Floats RFQs, reviews bids technically and on price, selects the vendor and raises the PO.',
-    demoAccounts: ['procurement', 'procurement2'],
+    demoAccounts: ['procurement'],
   },
   {
     key: 'vendor',
     shortName: 'Vendor',
     fullName: 'External Vendor / Supplier',
     roles: ['VENDOR'],
-    guide: 'Bids on RFQs, acknowledges POs and submits invoices.',
+    guide: 'Bids on RFQs, sees awarded POs and submits invoices.',
     demoAccounts: ['vendor1', 'vendor2'],
   },
   {

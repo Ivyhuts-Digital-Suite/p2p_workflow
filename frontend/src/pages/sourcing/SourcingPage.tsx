@@ -1,20 +1,30 @@
-import { Fragment, useState } from 'react';
+import { Fragment, useEffect, useState } from 'react';
 import { sourcingApi } from '../../api/services';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { confirmAction } from '../../components/overlays';
 import { PriceBreakdown } from '../../components/Workflow';
 import { Empty, ErrorBanner, Page, StatusBadge } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
-import { formatDateTime, formatMoney } from '../../utils/format';
+import { formatDateTime, formatMoney, productName } from '../../utils/format';
 import { RfqBidsPanel } from './RfqBidsPanel';
 
 export function SourcingPage() {
   const { hasRole } = useAuth();
   const canManage = hasRole('PROCUREMENT');
-  const [expanded, setExpanded] = useState<string | null>(null);
+  const [params] = useSearchParams();
+  // Opened from a PR's "View RFQ": that RFQ starts expanded and is scrolled into view.
+  const focusId = params.get('rfq');
+  const [expanded, setExpanded] = useState<string | null>(focusId);
   const { data, error, reload } = useApi(() => sourcingApi.listRfqs());
   const action = useAction(reload);
+  const focusMissing = !!focusId && !!data && !data.some((r) => r._id === focusId);
+
+  useEffect(() => {
+    if (!focusId || !data?.some((r) => r._id === focusId)) return;
+    setExpanded(focusId);
+    document.getElementById(`rfq-${focusId}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [focusId, data]);
 
   return (
     <Page
@@ -28,6 +38,7 @@ export function SourcingPage() {
       }
     >
       <ErrorBanner message={error ?? action.error} onClose={action.clearError} />
+      {focusMissing && <div className="alert alert-info">The RFQ for that requisition could not be found. It may have been cancelled.</div>}
       {!data?.length ? (
         <Empty>No RFQs yet. Initiate one from an approved PR under Requisitions.</Empty>
       ) : (
@@ -48,7 +59,7 @@ export function SourcingPage() {
           <tbody>
             {data.map((rfq) => (
               <Fragment key={rfq._id}>
-                <tr>
+                <tr id={`rfq-${rfq._id}`} className={rfq._id === focusId ? 'highlight' : ''}>
                   <td className="mono">
                     {rfq.rfqNumber}
                     {rfq.isEmergency && <div><span className="badge badge-red">EMERGENCY</span></div>}
@@ -60,8 +71,9 @@ export function SourcingPage() {
                   <td>
                     <ul className="item-list">
                       {rfq.items.map((i) => (
-                        <li key={i._id}>
-                          {i.description} × {i.quantity} {i.uom}
+                        <li key={i._id} title={i.description}>
+                          <strong>{productName(i)}</strong> × {i.quantity} {i.uom}
+                          {i.title && <div className="muted small">{i.description}</div>}
                         </li>
                       ))}
                     </ul>

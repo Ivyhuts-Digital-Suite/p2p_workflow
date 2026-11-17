@@ -22,7 +22,7 @@ Build a full-stack enterprise Procure-to-Pay platform for a hospital. The phases
 - The server and API route files for each module.
 
 **Modules**
-1. **Purchase Requisition (PR).** Users create, update and submit PRs against department budgets. The HOD or Admin can deactivate or cancel a PR.
+1. **Purchase Requisition (PR).** Users create, update and submit PRs against department budgets. The HOD or Admin can cancel a PR. **[Deactivate removed in Phase 23.]**
 2. **Vendor sourcing and live bidding.**
    - Procurement creates an RFQ or tender from an approved PR, and vendors submit bids.
    - A bidding dashboard shows the RFQ status, the number of bids and the top-ranked vendor, ranked on quality and price.
@@ -81,7 +81,7 @@ Build a full-stack enterprise Procure-to-Pay platform for a hospital. The phases
 
 **Demo**
 - One-click demo chips on the login page for every role. All demo accounts use the password `Password@123`.
-- Final demo accounts: `requester`, `hod.it`, `hod.ops`, `procurement`, `procurement2`, `store`, `finance`, `auditor`, `admin`, `vendor1`, `vendor2`.
+- Final demo accounts: `requester`, `hod.it`, `hod.ops`, `procurement`, `store`, `finance`, `auditor`, `admin`, `vendor1`, `vendor2`. **[`procurement2` removed in Phase 23.]**
 
 ## Phase 4: Database resilience
 
@@ -133,9 +133,9 @@ Fill in any missing enterprise steps, such as the GRN, quality inspection, parti
   - QC is done by Store. [Changed in Phase 9.]
 - **Technical evaluation.**
   - Endpoints: `PATCH /sourcing/bids/:bidId/technical-review` and `POST /sourcing/rfqs/:id/open-financials`.
-  - Only technically qualified bids are ranked.
+  - Only technically qualified bids are ranked. **[Phase 23: review is optional; only disqualified bids are left out.]**
 - **Budget re-check at award.** `POST /sourcing/rfqs/:id/award` refuses an award that exceeds the budget, or escalates it with a warning dialog.
-- **Short-close a PO.** `POST /purchase-orders/:id/short-close`, with a reason, releases the unused budget.
+- **[Removed in Phase 23]** Short-close a PO.
 - **Vendor licences.**
   - Endpoints: `POST /vendors/me/documents` plus verification endpoints.
   - Expired licences block bids and awards, and vendors get expiry alerts.
@@ -314,4 +314,50 @@ Build the project for Vercel and list the environment variables it needs.
 - Read `MONGO_URI` safely: trim spaces, line breaks and wrapping quotes.
 - On Vercel, never fall back to the local database address or the development JWT secret. Report a missing value instead.
 - Push the fix to `main`.
+
+## Phase 22: Analyse 12 changes before building (13 Nov)
+
+- Inspect the codebase and explain, for each of 12 changes: what was understood, how it works today, what will change, the workflow afterwards, and what stays untouched.
+- Do not edit anything until the plan is approved. Ask only questions that genuinely need a decision.
+
+## Phase 23: Simplified PR-to-GRN workflow, universal chat and display changes (13 Nov)
+
+1. **PR edit until HOD approval.** The requester can edit their PR only until the HOD approves it. Enforced in the UI and the API. A rejected PR stays editable for resubmission.
+2. **RFQ Initiated.** Once a PR has an RFQ, "Initiate RFQ" is replaced by an **RFQ Initiated** label and a **View RFQ** button that opens that exact RFQ, expanded, under RFQs & Bids. Duplicate RFQs stay blocked.
+3. **No mandatory Qualify/Disqualify gate.** Procurement can open the financials of a two-envelope tender without reviewing every bid. Technical review stays optional; disqualified bids are still not ranked or awarded. Prices stay sealed until opened, and vendors never see rival prices.
+4. **One Procurement user.** Remove the `procurement2` demo account from the seed, login chips and tests (never delete it from a live database). The journey no longer has separate "PO approval" and "PO issued" stages: one **"PO generated"** step, which waits on HOD/Finance only when the PO is above Procurement's authority.
+5. **Automatic PO.** Selecting the winning vendor generates the PO. If its Procurement approval level is within the Procurement user's DoA authority, it is approved automatically, and a PO with no further levels is issued at once. HOD/Finance levels, budget checks and escalations still apply, and the final approval issues the PO automatically.
+6. **No vendor acknowledgement.** PO generated → Store GRN. Vendors can invoice as soon as the PO is issued. Vendors still see their POs.
+7. **Remove Short-close and Deactivate.** Remove the PO short-close action and the PR deactivate action completely (buttons, endpoints and UI). Leave the Admin user and DoA-rule activate/deactivate toggles untouched.
+8. **[Icon placement replaced in Phase 24]** **Universal chat icon.** A chat icon with an unread badge for every role (Requester, HODs, Procurement, Store, Finance, Auditor, Vendor, Admin). Counts are per user, exclude the user's own messages, and update on reading. Read receipts: ✓ sent, blue ✓✓ read, hover shows who read it and when. Each role sees only the conversations it is allowed to see.
+9. **Product title × quantity.** Item lines get an optional product title, shown as "Product title × quantity" in tables, with the description still available. Older lines fall back to the description.
+10. **Journey cards.** The PR/PO number in blue, then a labelled Title and a labelled Description. A PO's title is its RFQ title; a PR's description is its justification.
+11. **GRN PO dropdown.** Each option: PO number | PO title | vendor name | company | product | description | date and time. The value stays the PO ID.
+12. **Live bids first** on the Bidding Dashboard.
+
+## Phase 24: Chat icon on every journey card (13 Nov)
+
+1. Remove the chat icon and central inbox from the sidebar completely.
+2. On every PR and PO journey card, replace the "Start Chat" button with a compact chat icon (💬) and a per-user unread badge for that card's conversation.
+3. The icon appears on every role's journey cards: Requester, HODs, Procurement, Store, Finance, Auditor, Admin and Vendor.
+   - Internal cards open the PR conversation.
+   - Vendor cards open the vendor's private conversation with Procurement on that RFQ, which continues once it becomes their PO. Only that vendor, Procurement and Admin take part; the Auditor reads it.
+   - **[Replaced in Phase 26: the awarded vendor joins the PR/PO conversation]** Internal PR conversations stay internal. On a card with an RFQ, Procurement, Admin and the Auditor also see a tab per vendor conversation.
+   - A vendor sees the buyer's team name, never staff names.
+4. Keep the WhatsApp-style read receipts (✓, blue ✓✓, who read it and when on hover) and per-user unread tracking.
+
+## Phase 25: Unread badge missing on the journey chat icons (13 Nov)
+
+- The 💬 icon showed on PR/PO journey cards but its unread badge never appeared. Each icon must show the user's unread count for that card's conversation (1, 2, 3 …) and update as soon as it is read.
+- Cause: the API dev server had not reloaded the new chat routes (its file watcher missed the changes in the OneDrive folder), so `/api/chat/unread` returned 404 and the card treated the failure as zero. Restart `npm run dev` after backend changes if the API does not reload by itself.
+- A failed unread request must never look like "no unread messages": the journey card says the counts could not be loaded and keeps the last badges shown.
+
+## Phase 26: The awarded vendor joins the PR/PO conversation (13 Nov)
+
+1. **Vendor chat access.** The vendor a PO is awarded and issued to can read the full history of that PR/PO conversation, see replies from internal users, and post in it, with per-user unread badges and WhatsApp-style read receipts.
+   - Only for their own live PO: never a losing vendor, never before the PO is issued, and not after their PO is cancelled and the PR sourced again.
+   - The vendor sees internal senders and readers by team ("Procurement", "Finance"), never by staff name.
+   - The vendor's journey card shows the order conversation and their private conversation with the buyer, each with its own unread count.
+2. **Never count your own messages.** A message is unread only for users other than its sender, in every kind of conversation.
+3. Run the typechecks and tests afterwards.
 

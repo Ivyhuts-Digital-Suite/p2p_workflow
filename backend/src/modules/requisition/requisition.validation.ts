@@ -3,6 +3,8 @@ import { ITEM_TYPE, PR_PRIORITY, enumValues } from '../../constants/status';
 
 const prItem = z.object({
   itemCode: z.string().optional(),
+  /** Optional so older clients keep working; the PR form asks for it */
+  title: z.string().trim().max(200).optional(),
   description: z.string().min(1),
   category: z.string().optional(),
   quantity: z.number().positive(),

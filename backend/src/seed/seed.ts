@@ -92,7 +92,6 @@ export async function seedData() {
     { name: 'Harish HOD (IT)', email: 'hod.it@p2p.local', role: ROLES.HOD, department: it._id, doaLimit: 1_000_000 },
     { name: 'Omkar HOD (Ops)', email: 'hod.ops@p2p.local', role: ROLES.HOD, department: ops._id, doaLimit: 1_000_000 },
     { name: 'Priya Procurement', email: 'procurement@p2p.local', role: ROLES.PROCUREMENT, department: ops._id, doaLimit: 100_000 },
-    { name: 'Pawan Procurement', email: 'procurement2@p2p.local', role: ROLES.PROCUREMENT, department: ops._id, doaLimit: 100_000 },
     { name: 'Sunil Store', email: 'store@p2p.local', role: ROLES.STORE, department: ops._id },
     { name: 'Farhan Finance', email: 'finance@p2p.local', role: ROLES.FINANCE, doaLimit: 100_000_000 },
     { name: 'Asha Auditor', email: 'auditor@p2p.local', role: ROLES.AUDITOR },

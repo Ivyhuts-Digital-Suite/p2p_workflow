@@ -20,8 +20,6 @@ router.post('/from-bid/:bidId', procurement, validate(createPoSchema), ctrl.crea
 router.post('/:id/approve', approvers, validate(approvalActionSchema), ctrl.approvePurchaseOrder);
 router.post('/:id/reject', approvers, validate(rejectionSchema), ctrl.rejectPurchaseOrder);
 router.post('/:id/issue', procurement, ctrl.issuePurchaseOrder);
-router.post('/:id/acknowledge', authorize(ROLES.VENDOR), ctrl.acknowledgePurchaseOrder);
 router.post('/:id/cancel', procurement, validate(cancelSchema), ctrl.cancelPurchaseOrder);
-router.post('/:id/short-close', procurement, validate(cancelSchema), ctrl.shortClosePurchaseOrder);
 
 export default router;

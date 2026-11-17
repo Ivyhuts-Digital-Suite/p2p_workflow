@@ -7,7 +7,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
 import type { PurchaseOrder } from '../../types';
 import { ITEM_TYPE_LABELS } from '../../types';
-import { formatDate, formatDateTime, formatMoney } from '../../utils/format';
+import { formatDate, formatDateTime, formatMoney, productName } from '../../utils/format';
 
 export function PurchaseOrdersPage() {
   const { user, hasRole } = useAuth();
@@ -28,7 +28,7 @@ export function PurchaseOrdersPage() {
   const rows = data?.filter(
     (po) =>
       !term ||
-      [po.poNumber, po.rfq?.rfqNumber, po.vendor?.companyName, po.vendor?.contactPerson, po.department?.code, ...po.items.map((i) => i.description)].some((v) =>
+      [po.poNumber, po.rfq?.rfqNumber, po.vendor?.companyName, po.vendor?.contactPerson, po.department?.code, ...po.items.flatMap((i) => [i.title, i.description])].some((v) =>
         v?.toLowerCase().includes(term),
       ),
   );
@@ -64,13 +64,13 @@ export function PurchaseOrdersPage() {
       );
     }
     if (hasRole('PROCUREMENT')) {
-      if (['PENDING_APPROVAL', 'APPROVED'].includes(po.status)) {
+      // A PO is issued automatically once approved. This is only for older POs approved before that.
+      if (po.status === 'APPROVED') {
         out.push(
           <button
             key="i"
             className="btn btn-sm btn-primary"
-            disabled={action.busy || po.status !== 'APPROVED'}
-            title={po.status !== 'APPROVED' ? po.pendingAt?.label : undefined}
+            disabled={action.busy}
             onClick={() => void action.run(() => poApi.issue(po._id), `${po.poNumber} issued to ${po.vendor?.companyName}`)}
           >
             Issue to vendor
@@ -83,24 +83,7 @@ export function PurchaseOrdersPage() {
             Cancel
           </button>,
         );
-      if (['ISSUED', 'ACKNOWLEDGED', 'PARTIALLY_RECEIVED'].includes(po.status))
-        out.push(
-          <button
-            key="s"
-            className="btn btn-sm"
-            disabled={action.busy}
-            onClick={() => void askAndRun(`Short-close ${po.poNumber}: nothing more will arrive, and the unused budget is released`, 'Short-close', (r) => poApi.shortClose(po._id, r), `${po.poNumber} short-closed and unused budget released`)}
-          >
-            Short-close
-          </button>,
-        );
     }
-    if (user?.role === 'VENDOR' && po.status === 'ISSUED')
-      out.push(
-        <button key="ack" className="btn btn-sm btn-primary" disabled={action.busy} onClick={() => void action.run(() => poApi.acknowledge(po._id), `${po.poNumber} acknowledged`)}>
-          Acknowledge
-        </button>,
-      );
     return out;
   };
 
@@ -174,8 +157,9 @@ export function PurchaseOrdersPage() {
                   <td>
                     <ul className="item-list">
                       {po.items.map((i) => (
-                        <li key={i._id}>
-                          {i.description} × {i.quantity} {i.uom}
+                        <li key={i._id} title={i.description}>
+                          <strong>{productName(i)}</strong> × {i.quantity} {i.uom}
+                          {i.title && <div className="muted small">{i.description}</div>}
                         </li>
                       ))}
                     </ul>
@@ -228,7 +212,10 @@ export function PurchaseOrdersPage() {
                             const tax = (actual * i.taxRate) / 100;
                             return (
                               <tr key={i._id}>
-                                <td>{i.description}</td>
+                                <td>
+                                  {productName(i)}
+                                  {i.title && <div className="muted small">{i.description}</div>}
+                                </td>
                                 <td>{ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}</td>
                                 <td className="num">
                                   {i.quantity} {i.uom}

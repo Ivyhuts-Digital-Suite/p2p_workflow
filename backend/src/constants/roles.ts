@@ -1,7 +1,7 @@
 export const ROLES = {
   /** Requester / end user raising purchase requisitions */
   REQUESTER: 'REQUESTER',
-  /** Department head - approves, cancels and deactivates department PRs */
+  /** Department head - approves and cancels department PRs */
   HOD: 'HOD',
   PROCUREMENT: 'PROCUREMENT',
   /** Store / warehouse team - goods receipt, quality inspection at receipt, inventory and returns */

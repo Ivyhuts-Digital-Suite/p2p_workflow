@@ -5,6 +5,8 @@ import { calcOrderTotals, round2 } from '../utils/money';
 export interface IInvoiceItem {
   _id: Types.ObjectId;
   poItem: Types.ObjectId;
+  /** Product title, shown as "title x quantity". Optional: older lines have none and show the description. */
+  title?: string;
   description: string;
   quantity: number;
   unitPrice: number;
@@ -102,6 +104,7 @@ export type InvoiceDocument = HydratedDocument<IInvoice>;
 
 const invoiceItemSchema = new Schema<IInvoiceItem>({
   poItem: { type: Schema.Types.ObjectId, required: true },
+  title: String,
   description: { type: String, required: true },
   quantity: { type: Number, required: true, min: 0.0001 },
   unitPrice: { type: Number, required: true, min: 0 },

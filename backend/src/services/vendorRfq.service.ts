@@ -1,9 +1,18 @@
+import { FilterQuery } from 'mongoose';
 import { BID_STATUS, RFQ_STATUS } from '../constants/status';
 import { Bid } from '../models/Bid';
 import { PurchaseOrder } from '../models/PurchaseOrder';
-import { RfqDocument } from '../models/RFQ';
+import { IRfq, RfqDocument } from '../models/RFQ';
 import { AuthUser } from '../types/auth';
 import { vendorPoScope } from './purchaseOrder.service';
+
+/** Vendors only see published RFQs they were invited to (or open tenders). */
+export function vendorRfqScope(user: AuthUser): FilterQuery<IRfq> {
+  return {
+    status: { $in: [RFQ_STATUS.PUBLISHED, RFQ_STATUS.CLOSED, RFQ_STATUS.AWARDED] },
+    $or: [{ invitedVendors: user.vendor }, { invitedVendors: { $size: 0 } }],
+  };
+}
 
 /**
  * An award is visible only to the winning vendor. To everyone else the RFQ just reads as closed,
@@ -35,6 +44,7 @@ export async function vendorRfqViews(rfqs: RfqDocument[], user: AuthUser) {
     items: rfq.items.map((i) => ({
       _id: i._id,
       itemCode: i.itemCode,
+      title: i.title,
       description: i.description,
       quantity: i.quantity,
       uom: i.uom,

@@ -36,7 +36,7 @@ The login and sign-up pages use one role card per team. A selected card must mat
 |---|---|---|---|
 | Purchase Request / Business Unit | `REQUESTER` | `requester@p2p.local` | Many, each needs activation |
 | Head of Department | `HOD` | `hod.it@p2p.local`, `hod.ops@p2p.local` | One per department |
-| Procurement & Sourcing Team | `PROCUREMENT` | `procurement@p2p.local`, `procurement2@p2p.local` | Many, each needs activation. A PO's creator can't approve it, so at least two are needed |
+| Procurement & Sourcing Team | `PROCUREMENT` | `procurement@p2p.local` | Many, each needs activation. One is enough: the Procurement approval level is taken when the vendor is selected |
 | External Vendor / Supplier | `VENDOR` | `vendor1@p2p.local`, `vendor2@p2p.local` | Many, free sign-up |
 | Store / Warehouse Team | `STORE` | `store@p2p.local` | One. Inspects quality at goods receipt |
 | Finance Team | `FINANCE` | `finance@p2p.local` | One. Handles the match, booking, tax and payment release |
@@ -129,14 +129,15 @@ p2p_workflow/
 - The description field suggests items from `GET /catalog/items?q=`, built from past POs, PRs and stock. Picking one fills in its item code, unit and price: the last PO price, or the last PR estimate for an item never ordered. There is no separate catalog to maintain.
 - A PR `DoaRule` adds approval levels after the HOD by value. The budget commits at the final level.
 - **Emergency purchases:** a PR flagged `isEmergency` with a written reason needs only the HOD. Procurement then buys directly from one approved vendor, up to `EMERGENCY_PO_CAP` before tax, with `POST /sourcing/emergency-purchases`. The PO skips approval so it can be issued at once, but Finance must ratify it (`POST /requisitions/:id/ratify`) before it can be paid.
-- The HOD or Admin can **cancel** a PR, which releases any committed budget. They can also **deactivate** or **reactivate** it: a deactivated PR stays on record but can't be submitted or sourced.
+- The requester can **edit** their PR until the HOD approves it; after that the API refuses edits. A rejected PR can be revised and resubmitted.
+- The HOD or Admin can **cancel** a PR, which releases any committed budget.
 
 **Module 2: Sourcing & live bidding** (`/api/sourcing`)
 - An RFQ consolidates approved, active PRs from a single department. PRs are claimed with a conditional update, so two RFQs can't source the same PR.
 - Bidding is **sealed**: vendors see only their own bid and, while bidding is open, their current rank and the total bid count.
 - Vendors can revise or withdraw a bid until the RFQ closes.
 - Bids are ranked automatically by lowest pre-tax total (L1, L2, …). Equal quotes rank by earlier submission. Vendors quote GST per line, shown as Actual + Tax = Total, but rank is on the pre-tax value because input GST is recoverable.
-- **Technical evaluation:** a tender with `technicalEvaluation` is two-envelope. Nobody sees prices or ranks, including Procurement and the bidding dashboard, until every bid is reviewed (`PATCH /sourcing/bids/:bidId/technical-review`) and the financials are opened (`POST /sourcing/rfqs/:id/open-financials`). On any RFQ, only qualified bids are ranked and a disqualified bid can't be selected. Vendors never see the result.
+- **Technical evaluation:** a tender with `technicalEvaluation` is two-envelope. Nobody sees prices or ranks, including Procurement and the bidding dashboard, until bidding has closed and the financials are opened (`POST /sourcing/rfqs/:id/open-financials`). The technical review (`PATCH /sourcing/bids/:bidId/technical-review`) is optional and does not gate the financials. On any RFQ, a disqualified bid is left out of the ranking and can't be selected. Vendors never see the result.
 - **Vendor licences:** vendors add documents with `POST /vendors/me/documents`, and Procurement verifies them with `POST /vendors/:id/documents/:docId/verify`. An RFQ can require licence types. A vendor can't bid or be awarded with a required licence missing, unverified or expired, or with any licence type on file that has no current document. Files aren't stored: a document holds its number, expiry and an optional link.
 - **Budget re-check:** at award the commitment moves from the PR estimates to the quoted value. Above the estimate needs a written reason (`409 BUDGET_OVERRUN`). Beyond what is left of the budget is refused (`422 BUDGET_EXCEEDED`) until Procurement escalates (`POST /sourcing/rfqs/:id/budget-escalation`) and Finance raises the allocation (`POST .../decision`). Cancelling the PO undoes the change.
 - Procurement (or an Admin as higher authority) can select any vendor. Selecting one other than L1 requires a written justification of at least 10 characters, which goes into the audit trail. A vendor who is no longer approved can't be selected.
@@ -152,10 +153,14 @@ p2p_workflow/
 - Each approval step is checked:
   - the approver holds the step's role, and an HOD must head the PO's department;
   - the **final approver's DoA limit is at least the PO value**;
-  - the PO creator can't approve it, and no one approves two levels.
-- After approval the PO is issued to the vendor, who acknowledges it. Cancelling a PO (only possible before any goods are received) returns its PRs to the approved pool.
-- **Short-close** (`POST /purchase-orders/:id/short-close`, with a reason) ends a part-delivered PO and releases the budget for what will never arrive. Nothing may be left awaiting sign-off, with Finance as an open invoice, or received but unbilled. Booked invoices still get paid.
-- Each PR has its own conversation (`GET|POST /requisitions/:id/messages`), open to everyone who can see the PR and reached from the PR itself or from **Start Chat** on its journey card. A sent message shows one tick, and a blue double tick once someone else has read it; hovering shows who. An auditor can read the thread without it counting as read. Vendors don't see PRs, so they have no access.
+  - the PO creator can't approve a HOD or Finance level, and no one approves two levels.
+- Selecting the vendor generates the PO. Its Procurement level is approved at once by the user who selected the vendor, as long as that level comes first and, when it is the last level, their DoA limit covers the PO. A PO with nothing left to approve is **issued straight away**; otherwise the final HOD or Finance approval issues it. There is no separate issue step and no vendor acknowledgement: the Store can receive goods and the vendor can invoice once the PO is issued.
+- Cancelling a PO (only possible before any goods are received) returns its PRs to the approved pool.
+- Each PR has its own conversation (`GET|POST /requisitions/:id/messages`), open to everyone who can see the PR and reached from the PR itself or from **Start Chat** on its journey card. A sent message shows one tick, and a blue double tick once someone else has read it; hovering shows who. An auditor can read the thread without it showing as a read receipt. The Store joins a PR's conversation once it has a PO. The vendor whose PO is issued joins it too: they read the full history and can post, but see staff by team name only. A losing vendor never joins, and a vendor leaves it if their PO is cancelled. Staff see a notice in the conversation once the vendor can read it.
+- Every journey card has a chat icon (💬) with the user's unread count for that card (`GET /chat/unread`): messages from others that they have not opened, each counted once, cleared for that user only when they read it.
+  - Internal cards open the PR conversation. On a card with an RFQ, Procurement and Admin also get a tab per vendor (`GET /chat/rfqs/:rfqId/vendors`, `GET|POST /chat/rfqs/:rfqId/vendors/:vendorId/messages`), and the Auditor can read them.
+  - Vendor cards open the vendor's private conversation with Procurement on that RFQ (`GET|POST /chat/rfqs/:rfqId/messages`). Once their PO is issued, the card also opens the order's PR/PO conversation, each with its own unread count. A vendor sees only their own conversations, and the buyer's team name, never a staff member's.
+  - A message is never unread for the person who sent it.
 - Rows, track steps and locked actions say who a document is waiting on (`pendingAt`). Staff names go to internal users only: a vendor sees just the team.
 - The dashboard's Journey Path (`GET /journey`) ends each track with goods receipt and inspection as one Store step, the invoice, then one Finance stage: invoice verification and 3-way match (including booking), tax verification, any payment approval, and payment release. Locks only name active roles: an old record naming a merged role resolves to the role that does that work now.
 
@@ -171,7 +176,7 @@ p2p_workflow/
 - The PO uses optimistic concurrency, so two GRNs posted at the same time can't over-receive it.
 
 **Module 5: 3-way match** (`/api/invoices`, Finance)
-- The PO dropdown comes from `GET /purchase-orders/invoiceable` and leaves out fully billed POs. A vendor gets only their own POs, once accepted by acknowledging them or delivering against them, and the API enforces the same rule on submission. Finance can also record an invoice against an issued PO.
+- The PO dropdown comes from `GET /purchase-orders/invoiceable` and leaves out fully billed POs. A vendor gets only their own POs, from the moment they are issued, and the API enforces the same rule on submission. Finance can also record an invoice against an issued PO.
 - Duplicate invoice numbers from the same vendor are blocked, ignoring upper and lower case.
 - A vendor can't submit an invoice until the Store has accepted, or a sign-off has cleared, something on the billed lines. Finance can key one early, and it stops at the match.
 - The match runs automatically when an invoice is submitted, and Finance can re-run it after new GRNs. It checks every invoice line against the PO and the GRNs, using the PO prices:
@@ -223,13 +228,13 @@ GET /auth/signup-options            POST /auth/register-internal        GET /aud
 GET|POST /admin/users               GET|POST|PATCH /admin/departments   GET|POST|PATCH /admin/doa-rules
 GET|POST /vendors                   POST /vendors/:id/approve|suspend|blacklist     GET|PATCH /vendors/me
 GET|POST /requisitions              PATCH /requisitions/:id
-POST /requisitions/:id/submit|approve|reject|cancel|deactivate|reactivate|ratify
+POST /requisitions/:id/submit|approve|reject|cancel|ratify       GET /chat/unread   GET|POST /chat/rfqs/:rfqId/messages|vendors/:vendorId/messages
 GET /journey                        POST /vendors/me/documents          POST /vendors/:id/documents/:docId/verify
 GET /sourcing/dashboard             GET|POST /sourcing/rfqs             POST /sourcing/rfqs/:id/publish|close|cancel|award|open-financials|budget-escalation
 GET|POST /sourcing/rfqs/:id/bids    POST /sourcing/bids/:bidId/withdraw PATCH /sourcing/bids/:bidId/quality-score|technical-review
 POST /sourcing/rfqs/:id/budget-escalation/decision                      POST /sourcing/emergency-purchases
 GET /purchase-orders?view=          GET /purchase-orders/summary|invoiceable      POST /purchase-orders/from-bid/:bidId
-POST /purchase-orders/:id/approve|reject|issue|acknowledge|cancel|short-close
+POST /purchase-orders/:id/approve|reject|cancel    (issue: only for older POs approved but never issued)
 GET|POST /grn                       GET /grn/inventory|inventory/near-expiry
 GET /grn/returns                    POST /grn/:id/returns               POST /grn/returns/:id/dispatch
 GET|POST /service-entries           POST /service-entries/:id/accept|reject

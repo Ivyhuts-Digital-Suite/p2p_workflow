@@ -73,7 +73,10 @@ export function CreateRfqForm({ onCreated, onCancel, fromPr }: { onCreated: () =
           <tbody>
             {fromPr.items.map((i, index) => (
               <tr key={i._id ?? index}>
-                <td>{i.description}</td>
+                <td>
+                  {i.title || i.description}
+                  {i.title && <div className="muted small">{i.description}</div>}
+                </td>
                 <td className="mono">{i.itemCode ?? '-'}</td>
                 <td className="num">
                   {i.quantity} {i.uom}

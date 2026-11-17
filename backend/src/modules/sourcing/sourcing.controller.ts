@@ -12,7 +12,7 @@ import { evaluateRfqBids } from '../../services/bidEvaluation.service';
 import { adjustCommitment, requisitionEstimate } from '../../services/budget.service';
 import { createPoFromBid, preparePoFromBid } from '../../services/purchaseOrder.service';
 import { licenceIssues } from '../../services/vendorCompliance.service';
-import { vendorRfqViews } from '../../services/vendorRfq.service';
+import { vendorRfqScope, vendorRfqViews } from '../../services/vendorRfq.service';
 import { AuthUser } from '../../types/auth';
 import { ApiError } from '../../utils/ApiError';
 import { asyncHandler } from '../../utils/asyncHandler';
@@ -36,14 +36,6 @@ function closedBidView(bid: BidDocument) {
   return { ...view, status: bid.status === BID_STATUS.REJECTED ? BID_STATUS.SUBMITTED : bid.status };
 }
 
-/** Vendors only see published RFQs they were invited to (or open tenders). */
-function vendorRfqScope(user: AuthUser): FilterQuery<IRfq> {
-  return {
-    status: { $in: [RFQ_STATUS.PUBLISHED, RFQ_STATUS.CLOSED, RFQ_STATUS.AWARDED] },
-    $or: [{ invitedVendors: user.vendor }, { invitedVendors: { $size: 0 } }],
-  };
-}
-
 async function loadRfq(id: string, user: AuthUser): Promise<RfqDocument> {
   const scope = isVendor(user) ? vendorRfqScope(user) : {};
   const rfq = await RFQ.findOne({ $and: [{ _id: id }, scope] });
@@ -64,9 +56,9 @@ export const createRfq = asyncHandler(async (req, res) => {
   }
   const uniquePrIds: string[] = [...new Set<string>(requisitionIds)];
 
-  const prs = await PurchaseRequisition.find({ _id: { $in: uniquePrIds }, status: PR_STATUS.APPROVED, isActive: true });
+  const prs = await PurchaseRequisition.find({ _id: { $in: uniquePrIds }, status: PR_STATUS.APPROVED });
   if (prs.length !== uniquePrIds.length) {
-    throw ApiError.unprocessable('Every requisition must be approved, active and not already under sourcing');
+    throw ApiError.unprocessable('Every requisition must be approved and not already under sourcing');
   }
   const departments = new Set(prs.map((p) => p.department.toString()));
   if (departments.size > 1) {
@@ -83,7 +75,7 @@ export const createRfq = asyncHandler(async (req, res) => {
   // Claim the PRs first (conditional update) so two RFQs can never source the same PR.
   const rfqId = new Types.ObjectId();
   const claim = await PurchaseRequisition.updateMany(
-    { _id: { $in: uniquePrIds }, status: PR_STATUS.APPROVED, isActive: true },
+    { _id: { $in: uniquePrIds }, status: PR_STATUS.APPROVED },
     {
       $set: { status: PR_STATUS.SOURCING, rfq: rfqId },
       $push: { history: { action: 'SOURCING_STARTED', by: oid(user.id), at: new Date() } },
@@ -104,6 +96,7 @@ export const createRfq = asyncHandler(async (req, res) => {
       items: prs.flatMap((pr) =>
         pr.items.map((i) => ({
           itemCode: i.itemCode,
+          title: i.title,
           description: i.description,
           quantity: i.quantity,
           uom: i.uom,
@@ -301,7 +294,7 @@ export const awardRfq = asyncHandler(async (req, res) => {
   await Bid.updateMany({ rfq: rfq._id, _id: { $ne: bid._id }, status: BID_STATUS.SUBMITTED }, { status: BID_STATUS.REJECTED });
 
   try {
-    const po = await createPoFromBid(bid, awarded, user.id, prepared);
+    const po = await createPoFromBid(bid, awarded, user, prepared);
     res.json({ rfq: awarded, bid, po });
   } catch (err) {
     console.error(`[sourcing] ${awarded.rfqNumber} awarded but PO creation failed:`, err);
@@ -394,7 +387,10 @@ export const technicalReview = asyncHandler(async (req, res) => {
   res.json({ _id: bid._id, technicalStatus: bid.technicalStatus, technicalRemarks: bid.technicalRemarks, qualityScore: bid.qualityScore });
 });
 
-/** Opens the prices of a two-envelope tender. Every bid must have been reviewed and at least one must qualify. */
+/**
+ * Opens the prices of a two-envelope tender once bidding has closed. The technical review is optional:
+ * a bid that was not reviewed is priced like a qualified one, and only a disqualified bid is left out.
+ */
 export const openFinancials = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const rfq = await loadRfq(req.params.id, user);
@@ -403,12 +399,9 @@ export const openFinancials = asyncHandler(async (req, res) => {
   if (!rfq.technicalEvaluation) throw ApiError.unprocessable('This RFQ has no technical evaluation: its prices are already open');
   if (rfq.financialsOpenedAt) throw ApiError.conflict('The financials are already open');
 
-  const bids = await Bid.find({ rfq: rfq._id, status: BID_STATUS.SUBMITTED }).select('technicalStatus');
-  if (bids.some((b) => b.technicalStatus === TECHNICAL_STATUS.PENDING)) {
-    throw ApiError.unprocessable('Action locked: every bid needs a technical review before the financials are opened');
-  }
-  if (!bids.some((b) => b.technicalStatus === TECHNICAL_STATUS.QUALIFIED)) {
-    throw ApiError.unprocessable('No bid qualified, so there is nothing to open. Cancel this RFQ and float a new one.');
+  const eligible = await Bid.exists({ rfq: rfq._id, status: BID_STATUS.SUBMITTED, technicalStatus: { $ne: TECHNICAL_STATUS.DISQUALIFIED } });
+  if (!eligible) {
+    throw ApiError.unprocessable('Every bid was disqualified or withdrawn, so there is nothing to open. Cancel this RFQ and float a new one.');
   }
 
   rfq.status = RFQ_STATUS.CLOSED;
@@ -429,8 +422,8 @@ export const emergencyPurchase = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const { requisitionId, vendorId, prices, justification, taxRate } = req.body;
 
-  const pr = await PurchaseRequisition.findOne({ _id: requisitionId, status: PR_STATUS.APPROVED, isActive: true, isEmergency: true });
-  if (!pr) throw ApiError.unprocessable('Only an approved, active emergency requisition can use this route');
+  const pr = await PurchaseRequisition.findOne({ _id: requisitionId, status: PR_STATUS.APPROVED, isEmergency: true });
+  if (!pr) throw ApiError.unprocessable('Only an approved emergency requisition can use this route');
 
   const rfqId = new Types.ObjectId();
   const priced = pr.items.map((item) => ({ item, unitPrice: prices[item._id.toString()] as number | undefined }));
@@ -450,6 +443,7 @@ export const emergencyPurchase = asyncHandler(async (req, res) => {
     requisitions: [pr._id],
     items: pr.items.map((i) => ({
       itemCode: i.itemCode,
+      title: i.title,
       description: i.description,
       quantity: i.quantity,
       uom: i.uom,
@@ -511,7 +505,7 @@ export const emergencyPurchase = asyncHandler(async (req, res) => {
   await bid.save();
 
   const prepared = await preparePoFromBid(bid, rfq, {});
-  const po = await createPoFromBid(bid, rfq, user.id, { ...prepared, approvals: [] });
+  const po = await createPoFromBid(bid, rfq, user, { ...prepared, approvals: [] });
   res.status(201).json({ rfq, bid, po });
 });
 
@@ -622,7 +616,7 @@ export const listRfqBids = asyncHandler(async (req, res) => {
       const { totalAmount, taxAmount, grandTotal, rank, priceScore, items, ...rest } = bid.toObject();
       const lines = items.map((line) => {
         const rfqItem = rfq.items.find((i) => i._id.equals(line.rfqItem));
-        const named = { _id: line._id, rfqItem: line.rfqItem, quantity: line.quantity, description: rfqItem?.description, uom: rfqItem?.uom };
+        const named = { _id: line._id, rfqItem: line.rfqItem, quantity: line.quantity, title: rfqItem?.title, description: rfqItem?.description, uom: rfqItem?.uom };
         return sealed ? named : { ...named, unitPrice: line.unitPrice, taxRate: line.taxRate, lineTotal: line.lineTotal };
       });
       return { ...rest, items: lines, pricesSealed: sealed, ...(sealed ? {} : { totalAmount, taxAmount, grandTotal, rank, priceScore }) };
@@ -674,7 +668,7 @@ export const biddingDashboard = asyncHandler(async (_req, res) => {
       timeRemainingMs: isLive ? rfq.closeAt.getTime() - now.getTime() : 0,
       totalBids: rfqBids.length,
       pricesSealed: sealed,
-      items: rfq.items.map((i) => `${i.description} × ${i.quantity} ${i.uom}`),
+      items: rfq.items.map((i) => `${i.title?.trim() || i.description} × ${i.quantity} ${i.uom}`),
       lowestBid: pricedBids.length ? Math.min(...pricedBids.map((b) => b.totalAmount)) : null,
       rankings: pricedBids
         .filter((b) => b.rank)

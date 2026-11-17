@@ -1,7 +1,8 @@
 import mongoose, { FilterQuery } from 'mongoose';
-import { PO_STATUS, PR_STATUS } from '../constants/status';
+import { ROLES } from '../constants/roles';
+import { APPROVAL_STATUS, PO_STATUS, PR_STATUS } from '../constants/status';
 import { BidDocument } from '../models/Bid';
-import { IPurchaseOrder, PurchaseOrder, PurchaseOrderDocument } from '../models/PurchaseOrder';
+import { IPoApproval, IPurchaseOrder, PurchaseOrder, PurchaseOrderDocument } from '../models/PurchaseOrder';
 import { PurchaseRequisition } from '../models/PurchaseRequisition';
 import { RFQ, RfqDocument } from '../models/RFQ';
 import { AuthUser } from '../types/auth';
@@ -10,6 +11,7 @@ import { calcOrderTotals } from '../utils/money';
 import { oid } from '../utils/objectId';
 import { nextDocNumber } from '../utils/sequence';
 import { resolveApprovalChain } from './doa.service';
+import { activeRole } from './workflow.service';
 
 const VENDOR_VISIBLE: string[] = [
   PO_STATUS.ISSUED,
@@ -81,6 +83,7 @@ export async function preparePoFromBid(bid: BidDocument, rfq: RfqDocument, terms
     return {
       rfqItem: rfqItem._id,
       itemCode: rfqItem.itemCode,
+      title: rfqItem.title,
       description: rfqItem.description,
       quantity: line.quantity,
       uom: rfqItem.uom,
@@ -94,13 +97,47 @@ export async function preparePoFromBid(bid: BidDocument, rfq: RfqDocument, terms
   return { items, rule, approvals, rest };
 }
 
-/** Stores the PO, attaches its DoA chain, and links it to the RFQ and its requisitions. */
+export const AUTO_APPROVAL_REMARK = 'Auto-approved at vendor selection, within Procurement authority';
+
+/**
+ * Selecting the vendor is the Procurement decision, so the PO's Procurement level is taken at once by
+ * the user who selected it, instead of waiting for a second Procurement user. That holds only when the
+ * Procurement level comes first and, if it is also the last level, the user's own DoA limit covers the PO.
+ * Any HOD or Finance level stays pending for that authority.
+ */
+function autoApproveProcurementLevel(approvals: IPoApproval[], user: AuthUser, grandTotal: number): IPoApproval[] {
+  const [first] = approvals;
+  if (!first || first.status !== APPROVAL_STATUS.PENDING || activeRole(first.role) !== ROLES.PROCUREMENT) return approvals;
+  if (user.role !== ROLES.PROCUREMENT && user.role !== ROLES.ADMIN) return approvals;
+  if (approvals.length === 1 && user.doaLimit < grandTotal) return approvals;
+  return [
+    { ...first, status: APPROVAL_STATUS.APPROVED, actedBy: oid(user.id), actedAt: new Date(), remarks: AUTO_APPROVAL_REMARK },
+    ...approvals.slice(1),
+  ];
+}
+
+/** A PO with every approval level taken goes to the vendor straight away: there is no separate issue step. */
+export function issueIfFullyApproved(po: PurchaseOrderDocument) {
+  if (po.status === PO_STATUS.PENDING_APPROVAL && po.approvals.every((a) => a.status === APPROVAL_STATUS.APPROVED)) {
+    po.status = PO_STATUS.ISSUED;
+    po.issuedAt = new Date();
+  }
+}
+
+/**
+ * Stores the PO, attaches its DoA chain, and links it to the RFQ and its requisitions. Within the selecting
+ * user's authority it is approved and issued at once; otherwise it waits for the remaining approval levels.
+ */
 export async function createPoFromBid(
   bid: BidDocument,
   rfq: RfqDocument,
-  userId: string,
+  user: AuthUser,
   prepared: Awaited<ReturnType<typeof preparePoFromBid>>,
 ): Promise<PurchaseOrderDocument> {
+  const userId = user.id;
+  const grandTotal = calcOrderTotals(prepared.items).grandTotal;
+  const approvals = autoApproveProcurementLevel(prepared.approvals, user, grandTotal);
+  const fullyApproved = approvals.every((a) => a.status === APPROVAL_STATUS.APPROVED);
   const po = await PurchaseOrder.create({
     ...prepared.rest,
     poNumber: await nextDocNumber('PO'),
@@ -111,12 +148,12 @@ export async function createPoFromBid(
     requisitions: rfq.requisitions,
     items: prepared.items,
     doaRule: prepared.rule._id,
-    approvals: prepared.approvals,
+    approvals,
     createdBy: userId,
     isEmergency: rfq.isEmergency,
     budgetVariance: rfq.budgetVariance,
-    // An emergency PO skips approval so it can be issued at once. Finance ratifies it afterwards, before it can be paid.
-    ...(rfq.isEmergency && { status: PO_STATUS.APPROVED }),
+    // An emergency PO skips approval and is issued at once. Finance ratifies it afterwards, before it can be paid.
+    ...((rfq.isEmergency || fullyApproved) && { status: PO_STATUS.ISSUED, issuedAt: new Date() }),
   });
 
   await Promise.all([

@@ -1,4 +1,5 @@
 import { FormEvent, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { requisitionApi, sourcingApi, vendorApi } from '../../api/services';
 import { askReason, Modal } from '../../components/overlays';
 import { CreateRfqForm } from '../sourcing/CreateRfqForm';
@@ -9,7 +10,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
 import type { Requisition } from '../../types';
 import { ITEM_TYPE_LABELS } from '../../types';
-import { formatDate, formatMoney } from '../../utils/format';
+import { formatDate, formatMoney, productName } from '../../utils/format';
 import { RequisitionForm } from './RequisitionForm';
 
 const GST_RATES = [0, 5, 12, 18, 28];
@@ -36,7 +37,7 @@ function EmergencyPurchaseDialog({ pr, onClose, onDone }: { pr: Requisition; onC
     const allPrices = Object.fromEntries(pr.items.map((i) => [i._id!, priceFor(i._id)]));
     void action.run(
       () => sourcingApi.emergencyPurchase({ requisitionId: pr._id, vendorId, prices: allPrices, taxRate, deliveryDays, justification }),
-      'Emergency PO created and ready to issue. Finance must ratify it before it can be paid.',
+      'Emergency PO created and issued to the vendor. Finance must ratify it before it can be paid.',
     );
   };
 
@@ -67,7 +68,10 @@ function EmergencyPurchaseDialog({ pr, onClose, onDone }: { pr: Requisition; onC
           <tbody>
             {pr.items.map((i) => (
               <tr key={i._id}>
-                <td>{i.description}</td>
+                <td>
+                  {productName(i)}
+                  {i.title && <div className="muted small">{i.description}</div>}
+                </td>
                 <td className="num">
                   {i.quantity} {i.uom}
                 </td>
@@ -118,6 +122,7 @@ function EmergencyPurchaseDialog({ pr, onClose, onDone }: { pr: Requisition; onC
 
 export function RequisitionsPage() {
   const { user, hasRole } = useAuth();
+  const navigate = useNavigate();
   const [showForm, setShowForm] = useState(false);
   const [buying, setBuying] = useState<Requisition | null>(null);
   const [bidding, setBidding] = useState<Requisition | null>(null);
@@ -138,6 +143,10 @@ export function RequisitionsPage() {
     const step = nextStep(pr);
     return step ? hasRole(step.role) : isHod;
   };
+
+  /** The requester may edit until the HOD approves. A rejected PR goes back to them to revise. */
+  const isEditable = (pr: Requisition) =>
+    pr.status === 'DRAFT' || pr.status === 'REJECTED' || (pr.status === 'SUBMITTED' && !pr.approvals?.some((a) => a.role === 'HOD' && a.status === 'APPROVED'));
 
   const actionsFor = (pr: Requisition) => {
     const own = pr.requester._id === user?._id;
@@ -168,12 +177,8 @@ export function RequisitionsPage() {
         </button>,
       );
 
-    if (!pr.isActive) {
-      if (isHod) add('Reactivate', () => requisitionApi.reactivate(pr._id), `${pr.prNumber} reactivated`);
-      return buttons;
-    }
     if (own && pr.status === 'DRAFT') add('Submit', () => requisitionApi.submit(pr._id), `${pr.prNumber} submitted for approval`, 'btn-primary');
-    if (own && ['DRAFT', 'SUBMITTED', 'REJECTED'].includes(pr.status)) {
+    if (own && isEditable(pr)) {
       buttons.push(
         <button key="edit" className="btn btn-sm" disabled={action.busy} onClick={() => setEditing(pr)}>
           Edit
@@ -187,8 +192,18 @@ export function RequisitionsPage() {
       add('Approve', () => requisitionApi.approve(pr._id), `${pr.prNumber} approved`, 'btn-primary');
       addWithReason('Reject', `Reject ${pr.prNumber}`, (r) => requisitionApi.reject(pr._id, r), `${pr.prNumber} rejected`);
     }
-    if (hasRole('PROCUREMENT')) {
-      const why = pr.status === 'APPROVED' ? '' : pr.status === 'SOURCING' ? 'An RFQ is already running for this PR' : pr.status === 'PO_CREATED' ? 'This PR already has a PO' : `The PR must be approved first (it is ${pr.status.toLowerCase()})`;
+    if (pr.rfq && hasRole('PROCUREMENT', 'AUDITOR')) {
+      // The RFQ exists: say so, and open that exact RFQ instead of offering a second one.
+      buttons.push(
+        <span key="rfq-status" className="badge badge-blue">
+          RFQ Initiated
+        </span>,
+        <button key="rfq-view" className="btn btn-sm" onClick={() => navigate(`/sourcing?rfq=${pr.rfq}`)}>
+          View RFQ
+        </button>,
+      );
+    } else if (hasRole('PROCUREMENT') && user?.role !== 'AUDITOR') {
+      const why = pr.status === 'APPROVED' ? '' : `The PR must be approved first (it is ${pr.status.toLowerCase()})`;
       buttons.push(
         <button key="bid" className="btn btn-sm btn-primary" disabled={action.busy || !!why} title={why} onClick={() => setBidding(pr)}>
           Initiate RFQ
@@ -203,7 +218,6 @@ export function RequisitionsPage() {
       );
     }
     if (isHod && ['DRAFT', 'SUBMITTED', 'APPROVED', 'REJECTED'].includes(pr.status)) {
-      addWithReason('Deactivate', `Deactivate ${pr.prNumber}`, (r) => requisitionApi.deactivate(pr._id, r), `${pr.prNumber} deactivated`);
       addWithReason('Cancel', `Cancel ${pr.prNumber}`, (r) => requisitionApi.cancel(pr._id, r), `${pr.prNumber} cancelled`, 'btn-danger', 'Cancel PR');
     }
     return buttons;
@@ -294,7 +308,7 @@ export function RequisitionsPage() {
           </thead>
           <tbody>
             {data.map((pr) => (
-              <tr key={pr._id} className={pr.isActive ? '' : 'inactive'}>
+              <tr key={pr._id}>
                 <td className="mono">
                   <button className="link" onClick={() => setViewing(pr)} title="Open the PR, its journey and conversation">
                     {pr.prNumber}
@@ -308,8 +322,9 @@ export function RequisitionsPage() {
                 <td>
                   <ul className="item-list">
                     {pr.items.map((i) => (
-                      <li key={i._id} title={ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}>
-                        {i.description} × {i.quantity} {i.uom}
+                      <li key={i._id} title={`${ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}: ${i.description}`}>
+                        <strong>{productName(i)}</strong> × {i.quantity} {i.uom}
+                        {i.title && <div className="muted small">{i.description}</div>}
                       </li>
                     ))}
                   </ul>
@@ -330,7 +345,6 @@ export function RequisitionsPage() {
                 <td>{formatDate(pr.createdAt)}</td>
                 <td>
                   <StatusBadge status={pr.status} />
-                  {!pr.isActive && <span className="badge badge-grey">INACTIVE</span>}
                   {pr.ratification?.status && <div className="muted small">Ratification: {pr.ratification.status.toLowerCase()}</div>}
                 </td>
                 <td>

@@ -86,7 +86,8 @@ function BidForm({ rfq, vendor }: { rfq: Rfq; vendor: Vendor | null }) {
             return (
               <tr key={item._id}>
                 <td>
-                  {item.description}
+                  {item.title || item.description}
+                  {item.title && <div className="muted small">{item.description}</div>}
                   {item.specifications && <div className="muted small">{item.specifications}</div>}
                 </td>
                 <td>
@@ -156,7 +157,7 @@ export function VendorRfqsPage() {
             <div>
               <span className="mono small">{rfq.rfqNumber}</span> <strong>{rfq.title}</strong>
               <div className="muted small">
-                {rfq.items.map((i) => `${i.description} × ${i.quantity} ${i.uom}`).join(', ')} · Closes {formatDateTime(rfq.closeAt)}
+                {rfq.items.map((i) => `${i.title?.trim() || i.description} × ${i.quantity} ${i.uom}`).join(', ')} · Closes {formatDateTime(rfq.closeAt)}
               </div>
               {rfq.status === 'AWARDED' && (
                 <div className="small">

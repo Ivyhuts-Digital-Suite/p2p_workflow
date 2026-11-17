@@ -4,6 +4,8 @@ import { GRN_QUALITY_STATUS, GRN_STATUS, GrnQualityStatus, GrnStatus, enumValues
 export interface IGrnItem {
   _id: Types.ObjectId;
   poItem: Types.ObjectId;
+  /** Product title, shown as "title x quantity". Optional: older lines have none and show the description. */
+  title?: string;
   description: string;
   orderedQty: number;
   receivedQty: number;
@@ -46,6 +48,7 @@ export type GoodsReceiptDocument = HydratedDocument<IGoodsReceipt>;
 
 const grnItemSchema = new Schema<IGrnItem>({
   poItem: { type: Schema.Types.ObjectId, required: true },
+  title: String,
   description: { type: String, required: true },
   orderedQty: { type: Number, required: true },
   receivedQty: { type: Number, required: true, min: 0 },

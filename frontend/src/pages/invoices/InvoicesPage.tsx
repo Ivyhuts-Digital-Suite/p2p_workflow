@@ -195,7 +195,7 @@ export function InvoicesPage() {
                     <ul className="item-list">
                       {inv.items.map((line, index) => (
                         <li key={index}>
-                          {line.description} × {line.quantity}
+                          <strong>{line.title?.trim() || line.description}</strong> × {line.quantity}
                         </li>
                       ))}
                     </ul>

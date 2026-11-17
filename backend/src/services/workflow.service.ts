@@ -64,7 +64,6 @@ export async function loadDirectory(viewer: AuthUser): Promise<Directory> {
 const nextStep = <T extends { status: string; role: Role }>(approvals: T[]) => approvals.find((a) => a.status === APPROVAL_STATUS.PENDING);
 
 export function prPendingAt(pr: IPurchaseRequisition, at: Directory): PendingAt | undefined {
-  if (!pr.isActive) return at(ROLES.HOD, pr.department);
   switch (pr.status) {
     case PR_STATUS.DRAFT:
     case PR_STATUS.REJECTED:
@@ -86,7 +85,6 @@ export function poPendingAt(po: IPurchaseOrder, at: Directory): PendingAt | unde
     case PO_STATUS.APPROVED:
       return at(ROLES.PROCUREMENT);
     case PO_STATUS.ISSUED:
-      return at(ROLES.VENDOR);
     case PO_STATUS.ACKNOWLEDGED:
     case PO_STATUS.PARTIALLY_RECEIVED:
       return at(ROLES.STORE);

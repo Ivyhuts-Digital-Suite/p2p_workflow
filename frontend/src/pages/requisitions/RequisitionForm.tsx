@@ -8,12 +8,13 @@ import type { ItemType, PrItem, Requisition } from '../../types';
 import { ITEM_TYPE_LABELS } from '../../types';
 import { formatMoney } from '../../utils/format';
 
-const blankItem = (): PrItem => ({ description: '', quantity: 1, uom: 'EA', estimatedUnitPrice: 0, itemType: 'GOODS' });
+const blankItem = (): PrItem => ({ title: '', description: '', quantity: 1, uom: 'EA', estimatedUnitPrice: 0, itemType: 'GOODS' });
 const COMMON_JUSTIFICATIONS = ['Urgent stock restock', 'Monthly consumption items', 'Emergency clinical requirement'];
 const CUSTOM = 'CUSTOM';
 
-const toLine = ({ itemCode, description, category, quantity, uom, estimatedUnitPrice, itemType }: PrItem): PrItem => ({
+const toLine = ({ itemCode, title, description, category, quantity, uom, estimatedUnitPrice, itemType }: PrItem): PrItem => ({
   itemCode,
+  title: title?.trim() || undefined,
   description,
   category,
   quantity,
@@ -124,6 +125,7 @@ export function RequisitionForm({ onCreated, onCancel, pr }: { onCreated: () => 
         <thead>
           <tr>
             <th>Item code</th>
+            <th>Product title *</th>
             <th>Description</th>
             <th>Type</th>
             <th>Qty</th>
@@ -138,6 +140,16 @@ export function RequisitionForm({ onCreated, onCancel, pr }: { onCreated: () => 
             <tr key={index}>
               <td>
                 <input value={item.itemCode ?? ''} aria-label="Item code" onChange={(e) => updateItem(index, { itemCode: e.target.value || undefined })} />
+              </td>
+              <td>
+                <input
+                  value={item.title ?? ''}
+                  required
+                  maxLength={200}
+                  placeholder="e.g. Dell Latitude 5440 Laptop"
+                  aria-label="Product title"
+                  onChange={(e) => updateItem(index, { title: e.target.value })}
+                />
               </td>
               <td>
                 <ItemSearch

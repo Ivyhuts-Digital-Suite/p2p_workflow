@@ -86,6 +86,7 @@ export const createGrn = asyncHandler(async (req, res) => {
     }
     return {
       poItem: poItem._id,
+      title: poItem.title,
       description: poItem.description,
       orderedQty: poItem.quantity,
       receivedQty: line.receivedQty,

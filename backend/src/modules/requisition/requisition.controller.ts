@@ -1,13 +1,16 @@
 import { FilterQuery } from 'mongoose';
 import { ROLES } from '../../constants/roles';
-import { APPROVAL_STATUS, PR_STATUS, RATIFICATION_STATUS } from '../../constants/status';
+import { APPROVAL_STATUS, PO_STATUS, PR_STATUS, RATIFICATION_STATUS } from '../../constants/status';
 import { currentUser } from '../../middleware/auth';
 import { Department } from '../../models/Department';
 import { IPurchaseRequisition, PurchaseRequisition, PurchaseRequisitionDocument } from '../../models/PurchaseRequisition';
-import { PrMessage, PrMessageDocument } from '../../models/PrMessage';
+import { PrMessage } from '../../models/PrMessage';
+import { PurchaseOrder } from '../../models/PurchaseOrder';
+import { vendorPoScope } from '../../services/purchaseOrder.service';
+import { markRead, messageView } from '../../services/chat.service';
 import { optionalApprovalChain } from '../../services/doa.service';
 import { trackForRequisition } from '../../services/journey.service';
-import { loadDirectory, prPendingAt } from '../../services/workflow.service';
+import { activeRole, loadDirectory, prPendingAt } from '../../services/workflow.service';
 import { AuthUser } from '../../types/auth';
 import { ApiError } from '../../utils/ApiError';
 import { asyncHandler } from '../../utils/asyncHandler';
@@ -36,6 +39,29 @@ function visibilityScope(user: AuthUser): FilterQuery<IPurchaseRequisition> {
   }
 }
 
+/**
+ * Which PR conversations each role takes part in. Everyone who can open a PR can talk on it. The Store
+ * also joins once a PR has a PO, because it receives the goods. A vendor joins the conversation of a PR
+ * whose current PO is theirs and has been issued to them: never a losing vendor, never before the PO is
+ * issued, and not once their PO is cancelled and the PR goes to someone else.
+ */
+export async function chatScope(user: AuthUser): Promise<FilterQuery<IPurchaseRequisition> | null> {
+  if (user.role === ROLES.VENDOR) {
+    if (!user.vendor) return null;
+    const pos = await PurchaseOrder.find({ $and: [vendorPoScope(user.vendor), { status: { $ne: PO_STATUS.CANCELLED } }] }).select('_id');
+    return { status: PR_STATUS.PO_CREATED, purchaseOrder: { $in: pos.map((po) => po._id) } };
+  }
+  if (user.role === ROLES.STORE) return { status: PR_STATUS.PO_CREATED };
+  return visibilityScope(user);
+}
+
+async function loadChatPr(id: string, user: AuthUser): Promise<PurchaseRequisitionDocument> {
+  const scope = await chatScope(user);
+  const pr = scope && (await PurchaseRequisition.findOne({ $and: [{ _id: id }, scope] }));
+  if (!pr) throw ApiError.notFound('Purchase requisition');
+  return pr;
+}
+
 async function loadPr(id: string, user: AuthUser): Promise<PurchaseRequisitionDocument> {
   const pr = await PurchaseRequisition.findOne({ $and: [{ _id: id }, visibilityScope(user)] });
   if (!pr) throw ApiError.notFound('Purchase requisition');
@@ -61,8 +87,10 @@ function assertStatus(pr: PurchaseRequisitionDocument, allowed: string[]) {
   }
 }
 
-function assertActive(pr: PurchaseRequisitionDocument) {
-  if (!pr.isActive) throw ApiError.unprocessable('PR is deactivated');
+/** Once the HOD has approved a PR, the requester can no longer change it. A rejected PR goes back to them to revise. */
+function assertEditable(pr: PurchaseRequisitionDocument) {
+  const hodApproved = pr.status !== PR_STATUS.REJECTED && pr.approvals.some((a) => activeRole(a.role) === ROLES.HOD && a.status === APPROVAL_STATUS.APPROVED);
+  if (hodApproved) throw ApiError.unprocessable('Action locked: the HOD has approved this PR, so it can no longer be edited');
 }
 
 const audit = (pr: PurchaseRequisitionDocument, action: string, user: AuthUser, remarks?: string) =>
@@ -98,7 +126,6 @@ export const listRequisitions = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const conditions: FilterQuery<IPurchaseRequisition>[] = [visibilityScope(user)];
   if (req.query.status) conditions.push({ status: String(req.query.status) });
-  if (req.query.active !== undefined) conditions.push({ isActive: req.query.active === 'true' });
 
   const prs = await PurchaseRequisition.find({ $and: conditions })
     .populate('requester', 'name email')
@@ -162,8 +189,8 @@ export const updateRequisition = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const pr = await loadPr(req.params.id, user);
   assertOwner(pr, user);
-  assertActive(pr);
   assertStatus(pr, [PR_STATUS.DRAFT, PR_STATUS.SUBMITTED, PR_STATUS.REJECTED]);
+  assertEditable(pr);
 
   pr.set(req.body);
   await pr.validate();
@@ -177,7 +204,6 @@ export const submitRequisition = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const pr = await loadPr(req.params.id, user);
   assertOwner(pr, user);
-  assertActive(pr);
   assertStatus(pr, [PR_STATUS.DRAFT, PR_STATUS.REJECTED]);
   await sendForApproval(pr, user, 'SUBMITTED');
   await pr.save();
@@ -191,7 +217,6 @@ export const submitRequisition = asyncHandler(async (req, res) => {
 export const approveRequisition = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const pr = await loadPr(req.params.id, user);
-  assertActive(pr);
   assertStatus(pr, [PR_STATUS.SUBMITTED]);
   // A PR submitted before chains existed has none yet.
   if (!pr.approvals.length) pr.set('approvals', await approvalChain(pr));
@@ -282,62 +307,25 @@ export const cancelRequisition = asyncHandler(async (req, res) => {
   res.json(pr);
 });
 
-/** HOD/Admin freezes a PR: it stays on record but cannot be submitted, approved or sourced. */
-export const deactivateRequisition = asyncHandler(async (req, res) => {
-  const user = currentUser(req);
-  const pr = await loadPr(req.params.id, user);
-  assertDepartmentAuthority(pr, user);
-  if (([PR_STATUS.SOURCING, PR_STATUS.PO_CREATED, PR_STATUS.CANCELLED] as string[]).includes(pr.status)) {
-    throw ApiError.unprocessable(`Cannot deactivate a PR that is ${pr.status}`);
-  }
-  pr.isActive = false;
-  audit(pr, 'DEACTIVATED', user, req.body.reason);
-  await pr.save();
-  res.json(pr);
-});
-
-export const reactivateRequisition = asyncHandler(async (req, res) => {
-  const user = currentUser(req);
-  const pr = await loadPr(req.params.id, user);
-  assertDepartmentAuthority(pr, user);
-  pr.isActive = true;
-  audit(pr, 'REACTIVATED', user);
-  await pr.save();
-  res.json(pr);
-});
-
 // ---- Conversation on a PR -------------------------------------------------------
 
-const messageView = (m: PrMessageDocument) => ({
-  _id: m._id,
-  sender: m.sender,
-  senderName: m.senderName,
-  senderRole: m.senderRole,
-  text: m.text,
-  createdAt: m.createdAt,
-  readBy: m.readBy.map((r) => ({ user: r.user, name: r.name, at: r.at })),
-});
-
-/** The whole conversation on a PR, for anyone who can see the PR. Reading it marks the others' messages read. */
+/**
+ * The whole conversation on a PR, for anyone who takes part in it. Reading it marks the others' messages
+ * read for the reader alone, once per message. An auditor's reading is kept out of the read receipts.
+ */
 export const listMessages = asyncHandler(async (req, res) => {
   const user = currentUser(req);
-  const pr = await loadPr(req.params.id, user);
-  // An auditor looks on without taking part, so their reading is not a read receipt.
-  if (user.role !== ROLES.AUDITOR) {
-    await PrMessage.updateMany(
-      { pr: pr._id, sender: { $ne: oid(user.id) }, 'readBy.user': { $ne: oid(user.id) } },
-      { $push: { readBy: { user: oid(user.id), name: user.name, at: new Date() } } },
-    );
-  }
+  const pr = await loadChatPr(req.params.id, user);
+  await markRead({ pr: pr._id }, user);
   const messages = await PrMessage.find({ pr: pr._id }).sort({ createdAt: 1 });
-  res.json(messages.map(messageView));
+  res.json(messages.map((m) => messageView(m, user)));
 });
 
 export const postMessage = asyncHandler(async (req, res) => {
   const user = currentUser(req);
-  const pr = await loadPr(req.params.id, user);
+  const pr = await loadChatPr(req.params.id, user);
   const message = await PrMessage.create({ pr: pr._id, sender: user.id, senderName: user.name, senderRole: user.role, text: req.body.text });
-  res.status(201).json(messageView(message));
+  res.status(201).json(messageView(message, user));
 });
 
 /** The full journey of one PR, through its PO once there is one. */

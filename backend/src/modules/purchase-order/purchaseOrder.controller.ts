@@ -9,7 +9,6 @@ import {
   PO_STATUS,
   PO_VENDOR_INVOICEABLE_STATUSES,
   PR_STATUS,
-  SERVICE_ENTRY_STATUS,
 } from '../../constants/status';
 import { currentUser } from '../../middleware/auth';
 import { Bid } from '../../models/Bid';
@@ -17,21 +16,17 @@ import { Invoice } from '../../models/Invoice';
 import { IPurchaseOrder, PurchaseOrder, PurchaseOrderDocument } from '../../models/PurchaseOrder';
 import { PurchaseRequisition } from '../../models/PurchaseRequisition';
 import { RFQ } from '../../models/RFQ';
-import { ServiceEntry } from '../../models/ServiceEntry';
-import { adjustCommitment, requisitionEstimate } from '../../services/budget.service';
+import { adjustCommitment } from '../../services/budget.service';
 import { assertCanApprove } from '../../services/doa.service';
 import { clearedQuantities } from '../../services/matching.service';
-import { createPoFromBid, preparePoFromBid, updatePurchaseOrder, vendorPoScope } from '../../services/purchaseOrder.service';
+import { createPoFromBid, issueIfFullyApproved, preparePoFromBid, vendorPoScope } from '../../services/purchaseOrder.service';
 import { loadDirectory, poPendingAt } from '../../services/workflow.service';
 import { AuthUser } from '../../types/auth';
 import { ApiError } from '../../utils/ApiError';
 import { asyncHandler } from '../../utils/asyncHandler';
-import { round2 } from '../../utils/money';
 import { oid } from '../../utils/objectId';
 
 const BILLED_INVOICE_STATUSES: string[] = [INVOICE_STATUS.BOOKED, INVOICE_STATUS.TAX_VERIFIED, INVOICE_STATUS.PAID];
-/** Invoices with their outcome still open, which would be stranded if the PO were closed */
-const OPEN_INVOICE_STATUSES: string[] = [INVOICE_STATUS.SUBMITTED, INVOICE_STATUS.MATCHED, INVOICE_STATUS.EXCEPTION];
 
 function visibilityScope(user: AuthUser): FilterQuery<IPurchaseOrder> {
   switch (user.role) {
@@ -81,7 +76,7 @@ export const createFromBid = asyncHandler(async (req, res) => {
   if (!rfq) throw ApiError.notFound('RFQ');
 
   const prepared = await preparePoFromBid(bid, rfq, req.body);
-  res.status(201).json(await createPoFromBid(bid, rfq, user.id, prepared));
+  res.status(201).json(await createPoFromBid(bid, rfq, user, prepared));
 });
 
 /** True when the PO's next approval step is the caller's. Later steps wait for earlier ones. */
@@ -105,7 +100,8 @@ export const listPurchaseOrders = asyncHandler(async (req, res) => {
   let pos = await PurchaseOrder.find({ $and: conditions })
     .populate('vendor', 'companyName vendorCode contactPerson')
     .populate('department', 'name code')
-    .populate('rfq', 'rfqNumber')
+    // The RFQ title is the PO's title (vendors already see RFQ titles).
+    .populate('rfq', 'rfqNumber title')
     .sort({ createdAt: -1 });
   if (req.query.pendingMyApproval === 'true') pos = pos.filter((po) => isNextApprover(po, user));
 
@@ -201,9 +197,8 @@ export const approvePurchaseOrder = asyncHandler(async (req, res) => {
   step.actedAt = new Date();
   step.remarks = req.body.remarks;
 
-  if (po.approvals.every((a) => a.status === APPROVAL_STATUS.APPROVED)) {
-    po.status = PO_STATUS.APPROVED;
-  }
+  // The final approval issues the PO to the vendor: there is no separate issue step.
+  issueIfFullyApproved(po);
   await po.save();
   res.json(po);
 });
@@ -223,7 +218,7 @@ export const rejectPurchaseOrder = asyncHandler(async (req, res) => {
   res.json(po);
 });
 
-/** Releases the approved PO to the vendor. */
+/** Releases a PO approved before approval issued it automatically. Kept for those older POs only. */
 export const issuePurchaseOrder = asyncHandler(async (req, res) => {
   const po = await loadPo(req.params.id, currentUser(req));
   assertStatus(po, [PO_STATUS.APPROVED]);
@@ -231,16 +226,6 @@ export const issuePurchaseOrder = asyncHandler(async (req, res) => {
   po.issuedAt = new Date();
   await po.save();
   res.json(po);
-});
-
-export const acknowledgePurchaseOrder = asyncHandler(async (req, res) => {
-  const user = currentUser(req);
-  const po = await loadPo(req.params.id, user);
-  assertStatus(po, [PO_STATUS.ISSUED]);
-  po.status = PO_STATUS.ACKNOWLEDGED;
-  po.acknowledgedAt = new Date();
-  await po.save();
-  res.json(vendorSafe(po.toObject(), user));
 });
 
 /** Cancels a PO with no receipts and returns its PRs to the approved pool for re-sourcing. */
@@ -265,39 +250,4 @@ export const cancelPurchaseOrder = asyncHandler(async (req, res) => {
     },
   );
   res.json(po);
-});
-
-/**
- * Ends a part-delivered PO and returns the budget for what will never arrive. Everything that was
- * delivered must be finished first, so nothing is stranded: no sign-offs or invoices
- * awaiting a decision, and every received unit invoiced. Invoices already booked still get paid.
- */
-export const shortClosePurchaseOrder = asyncHandler(async (req, res) => {
-  const user = currentUser(req);
-  const po = await loadPo(req.params.id, user);
-  assertStatus(po, [PO_STATUS.ISSUED, PO_STATUS.ACKNOWLEDGED, PO_STATUS.PARTIALLY_RECEIVED]);
-
-  if (await ServiceEntry.exists({ purchaseOrder: po._id, status: SERVICE_ENTRY_STATUS.PENDING })) {
-    throw ApiError.unprocessable('Action locked: a service or commissioning sign-off on this PO is still pending');
-  }
-  if (await Invoice.exists({ purchaseOrder: po._id, status: { $in: OPEN_INVOICE_STATUSES } })) {
-    throw ApiError.unprocessable('Action locked: an invoice on this PO is still with Finance');
-  }
-  const uninvoiced = po.items.find((i) => i.receivedQty > i.invoicedQty);
-  if (uninvoiced) {
-    throw ApiError.unprocessable(`Received goods have not been invoiced yet: ${uninvoiced.description}. Invoice them, or return them, first.`);
-  }
-
-  // Never release more than this PO committed: on a PO from before awards adjusted the budget, that is the PR estimates.
-  const committed = po.budgetVariance === undefined ? await requisitionEstimate(po.requisitions) : po.subtotal;
-  const unused = po.items.reduce((sum, i) => sum + Math.max(i.quantity - i.receivedQty, 0) * i.unitPrice, 0);
-  const releasedBudget = round2(Math.min(unused, committed));
-
-  const saved = await updatePurchaseOrder(po._id, (fresh) => {
-    if (fresh.status === PO_STATUS.SHORT_CLOSED) throw ApiError.conflict('This PO has already been short-closed');
-    fresh.status = PO_STATUS.SHORT_CLOSED;
-    fresh.shortClose = { reason: req.body.reason, by: oid(user.id), at: new Date(), releasedBudget };
-  });
-  await adjustCommitment(po.department, -releasedBudget);
-  res.json(saved);
 });

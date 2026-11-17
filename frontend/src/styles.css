@@ -173,6 +173,10 @@ legend { font-weight: 600; padding: 0 6px; }
 .journey-mine { border-color: #9db3ff; background: #f7f9ff; }
 .journey-head { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
 .journey-message { color: #6b4a00; font-size: 12.5px; }
+.journey-identity { display: grid; gap: 2px; min-width: 0; flex: 1 1 260px; }
+.journey-ref { color: #2343a8; font-weight: 600; font-size: 13px; }
+.journey-field { display: flex; gap: 6px; align-items: baseline; font-size: 13px; overflow-wrap: anywhere; }
+.journey-field-label { color: var(--muted, #6b7280); font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; min-width: 78px; flex-shrink: 0; }
 .journey-message-mine { color: #23408f; font-weight: 600; }
 .journey-steps { display: flex; flex-wrap: wrap; gap: 4px 2px; list-style: none; margin: 0; padding: 0; }
 .journey-stage { display: inline-flex; flex-direction: column; gap: 2px; padding: 4px 6px; border: 1px solid var(--border); border-radius: var(--radius); background: #fafbfc; max-width: 100%; }
@@ -232,6 +236,12 @@ legend { font-weight: 600; padding: 0 6px; }
 .chat-read { color: #1d8cf8; font-weight: 700; }
 .chat-form { display: flex; gap: 8px; margin-top: 8px; }
 .chat-form input { flex: 1; }
+/* The chat icon on a journey card, with the user's unread count for that card */
+.chat-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; min-width: 34px; height: 30px; background: #fff; border: 1px solid var(--border); border-radius: 8px; font-size: 16px; line-height: 1; padding: 0 8px; cursor: pointer; }
+.chat-icon:hover { background: #f5f7ff; border-color: #9fb3ff; }
+.chat-icon:focus-visible { outline: 2px solid #6d8cff; outline-offset: 2px; }
+.chat-badge { position: absolute; top: -7px; right: -7px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: #d93025; color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; }
+.chat-badge-inline { position: static; display: inline-block; margin-left: 6px; }
 .modal-header { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 10px; }
 .modal-header h2 { margin: 0; }
 .modal-header .link { font-size: 20px; line-height: 1; }

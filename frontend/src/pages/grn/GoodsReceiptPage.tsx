@@ -6,7 +6,7 @@ import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
 import type { GoodsReceipt } from '../../types';
 import { BATCH_TRACKED, ITEM_TYPE_LABELS, SERIAL_TRACKED } from '../../types';
-import { formatDate, poLabel } from '../../utils/format';
+import { formatDate, grnPoLabel, productName } from '../../utils/format';
 
 interface LineInput {
   receivedQty: number;
@@ -105,7 +105,11 @@ export function GoodsReceiptPage() {
   });
   const returnAction = useAction(refresh);
 
-  const receivable = useMemo(() => pos.data?.filter((p) => RECEIVABLE.includes(p.status) && p.items.some((i) => i.itemType !== 'SERVICE')) ?? [], [pos.data]);
+  // One option per PO, by its ID; only POs the Store can receive goods against.
+  const receivable = useMemo(
+    () => [...new Map((pos.data ?? []).filter((p) => RECEIVABLE.includes(p.status) && p.items.some((i) => i.itemType !== 'SERVICE')).map((p) => [p._id, p])).values()],
+    [pos.data],
+  );
   const po = receivable.find((p) => p._id === poId);
   const goodsLines = po?.items.filter((i) => i.itemType !== 'SERVICE') ?? [];
 
@@ -163,7 +167,7 @@ export function GoodsReceiptPage() {
               <option value="">Select PO…</option>
               {receivable.map((p) => (
                 <option key={p._id} value={p._id}>
-                  {poLabel(p)}
+                  {grnPoLabel(p)}
                 </option>
               ))}
             </select>
@@ -221,7 +225,8 @@ export function GoodsReceiptPage() {
                     return (
                       <tr key={i._id}>
                         <td>
-                          {i.description}
+                          {productName(i)}
+                          {i.title && <div className="muted small">{i.description}</div>}
                           <div className="muted small">{ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}</div>
                         </td>
                         <td className="num">{i.quantity}</td>
@@ -354,7 +359,7 @@ export function GoodsReceiptPage() {
                       </td>
                       <td className="mono">{g.purchaseOrder?.poNumber}</td>
                       <td>{g.vendor?.companyName}</td>
-                      <td>{g.items.map((l) => l.description).join(', ')}</td>
+                      <td>{g.items.map((l) => `${productName(l)} × ${l.receivedQty}`).join(', ')}</td>
                       <td>{g.deliveryNoteNumber ?? '-'}</td>
                       <td>{g.physicalCheck ? `${g.physicalCheck.boxesCounted} / ${g.physicalCheck.boxesExpected}` : '-'}</td>
                       <td>{formatDate(g.receivedAt)}</td>
@@ -371,7 +376,7 @@ export function GoodsReceiptPage() {
                               const returnable = l.rejectedQty + (l.qcRejectedQty ?? 0) - (l.returnedQty ?? 0);
                               return (
                                 <li key={l._id}>
-                                  <strong>{l.description}</strong>: received {l.receivedQty}, accepted {l.acceptedQty}
+                                  <strong>{productName(l)}</strong>: received {l.receivedQty}, accepted {l.acceptedQty}
                                   {l.qcReleasedQty !== undefined && `, released by QC ${l.qcReleasedQty}`}
                                   {!!l.qcRejectedQty && `, rejected by QC ${l.qcRejectedQty}`}
                                   {l.rejectedQty > 0 && `, rejected ${l.rejectedQty} (${l.rejectionReason})`}

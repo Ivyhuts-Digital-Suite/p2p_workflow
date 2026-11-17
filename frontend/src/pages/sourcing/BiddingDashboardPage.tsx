@@ -6,6 +6,10 @@ import { formatDateTime, formatDuration, formatMoney } from '../../utils/format'
 
 const REFRESH_MS = 15_000;
 
+/** Live bidding first, then RFQs waiting for an award, then awarded ones. */
+const SECTION_ORDER: Record<string, number> = { LIVE: 0, AWAITING_CLOSE: 1, CLOSED: 1, AWARDED: 2 };
+const sectionOf = (status: string) => SECTION_ORDER[status] ?? 1;
+
 export function BiddingDashboardPage() {
   const { data, error, reload, loading } = useApi(() => sourcingApi.dashboard());
 
@@ -13,6 +17,9 @@ export function BiddingDashboardPage() {
     const timer = window.setInterval(() => void reload(), REFRESH_MS);
     return () => window.clearInterval(timer);
   }, [reload]);
+
+  // Stable sort: within a section, the server's order (soonest closing first) is kept.
+  const rows = data ? [...data.rfqs].sort((a, b) => sectionOf(a.status) - sectionOf(b.status)) : [];
 
   return (
     <Page title="Live Bidding Dashboard" actions={<span className="muted small">{loading ? 'Refreshing…' : `Auto-refresh every ${REFRESH_MS / 1000}s`}</span>}>
@@ -25,11 +32,11 @@ export function BiddingDashboardPage() {
             <Stat label="Awarded" value={data.summary.awarded} />
             <Stat label="Total bids" value={data.summary.totalBids} />
           </div>
-          {!data.rfqs.length ? (
+          {!rows.length ? (
             <Empty>No published RFQs.</Empty>
           ) : (
             <div className="cards">
-              {data.rfqs.map((row) => (
+              {rows.map((row) => (
                 <Card key={row.rfqId}>
                   <div className="card-head">
                     <div>

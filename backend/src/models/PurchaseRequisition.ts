@@ -17,6 +17,8 @@ import { round2 } from '../utils/money';
 export interface IPrItem {
   _id: Types.ObjectId;
   itemCode?: string;
+  /** Product title, shown as "title x quantity". Optional: older lines have none and show the description. */
+  title?: string;
   description: string;
   category?: string;
   quantity: number;
@@ -54,7 +56,7 @@ export interface IPurchaseRequisition {
   neededBy?: Date;
   priority: string;
   status: PrStatus;
-  /** HOD/Admin can deactivate a PR to freeze it without cancelling it */
+  /** Legacy: PRs could once be deactivated. Kept for old records; no longer read or set. */
   isActive: boolean;
   /** Ordered approval chain, set on submission: the HOD, then any levels from a PR DoA rule */
   approvals: IPrApproval[];
@@ -83,6 +85,7 @@ export const auditEntrySchema = new Schema<IAuditEntry>(
 
 const prItemSchema = new Schema<IPrItem>({
   itemCode: { type: String, trim: true },
+  title: { type: String, trim: true },
   description: { type: String, required: true, trim: true },
   category: String,
   quantity: { type: Number, required: true, min: 0.0001 },

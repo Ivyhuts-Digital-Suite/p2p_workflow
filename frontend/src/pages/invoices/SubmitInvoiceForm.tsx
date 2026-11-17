@@ -84,7 +84,7 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
         <div className="alert alert-info">
           {isVendor ? (
             <span>
-              No purchase orders to invoice. A PO appears here once it has been awarded to your company and you have acknowledged it under{' '}
+              No purchase orders to invoice. A PO appears here once it has been awarded and issued to your company. See{' '}
               <Link to="/purchase-orders">Purchase Orders</Link>.
             </span>
           ) : (
@@ -122,7 +122,10 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
                 const lineTax = (lineActual * l.taxRate) / 100;
                 return (
                   <tr key={i._id}>
-                    <td>{i.description}</td>
+                    <td>
+                      {i.title || i.description}
+                      {i.title && <div className="muted small">{i.description}</div>}
+                    </td>
                     <td className="num">{i.quantity}</td>
                     <td className="num">{openToBill(i)}</td>
                     <td>

@@ -54,6 +54,20 @@ export interface CatalogItem {
   estimatedUnitPrice?: number;
 }
 
+/** The signed-in user's unread messages, for the badge on each journey card: by PR, and by RFQ for vendor conversations */
+export interface ChatUnread {
+  prs: Record<string, number>;
+  rfqs: Record<string, number>;
+}
+
+/** One vendor's conversation on an RFQ, as Procurement lists them */
+export interface VendorThread {
+  vendorId: string;
+  companyName: string;
+  unread: number;
+  lastMessageAt?: string;
+}
+
 export interface PrMessage {
   _id: string;
   sender: string;
@@ -93,11 +107,14 @@ export interface JourneyTrack {
   id: string;
   reference: string;
   title: string;
+  description?: string;
   steps: JourneyStep[];
   pendingAt?: PendingAt;
   message: string;
   yourAction: boolean;
   prId?: string;
+  /** The RFQ behind the track, for vendor conversations */
+  rfqId?: string;
 }
 
 export interface User {
@@ -200,6 +217,8 @@ export interface BankDetails {
 export interface PrItem {
   _id?: string;
   itemCode?: string;
+  /** Product title; older lines have none and fall back to the description */
+  title?: string;
   description: string;
   category?: string;
   quantity: number;
@@ -228,6 +247,8 @@ export interface Requisition {
   isEmergency?: boolean;
   emergencyReason?: string;
   ratification?: { status?: string; remarks?: string };
+  /** The RFQ raised for this PR, once there is one */
+  rfq?: string;
 }
 
 export interface Vendor {
@@ -260,6 +281,7 @@ export interface VendorDocument {
 
 export interface RfqItem {
   _id: string;
+  title?: string;
   description: string;
   quantity: number;
   uom: string;
@@ -294,7 +316,7 @@ export interface Bid {
   _id: string;
   rfq: string;
   vendor: Ref & { rating?: number };
-  items: { rfqItem: string; quantity: number; unitPrice: number; taxRate?: number; lineTotal: number; description?: string; uom?: string }[];
+  items: { rfqItem: string; quantity: number; unitPrice: number; taxRate?: number; lineTotal: number; title?: string; description?: string; uom?: string }[];
   totalAmount: number;
   taxAmount?: number;
   grandTotal?: number;
@@ -335,6 +357,8 @@ export interface DashboardRow {
 
 export interface PoItem {
   _id: string;
+  /** Product title; older lines have none and fall back to the description */
+  title?: string;
   description: string;
   quantity: number;
   uom: string;
@@ -354,7 +378,8 @@ export interface PurchaseOrder {
   poNumber: string;
   vendor: Ref;
   department: Ref;
-  rfq?: { _id: string; rfqNumber: string };
+  /** The RFQ title is the PO's title */
+  rfq?: { _id: string; rfqNumber: string; title?: string };
   items: PoItem[];
   subtotal: number;
   taxTotal: number;
@@ -390,6 +415,7 @@ export interface GoodsReceipt {
   status: string;
   items: {
     _id: string;
+    title?: string;
     description: string;
     orderedQty: number;
     receivedQty: number;
@@ -476,7 +502,7 @@ export interface Invoice {
   purchaseOrder: { _id: string; poNumber: string };
   invoiceDate: string;
   dueDate?: string;
-  items: { description: string; quantity: number; unitPrice: number; taxRate: number }[];
+  items: { title?: string; description: string; quantity: number; unitPrice: number; taxRate: number }[];
   adjustments?: { _id: string; type: 'DEBIT' | 'CREDIT'; noteNumber: string; vendorReference?: string; taxableAmount: number; gstAmount: number; total: number; reason: string }[];
   exceptionDecision?: { exceptionTypes?: string[]; reason?: string };
   pendingAt?: PendingAt;

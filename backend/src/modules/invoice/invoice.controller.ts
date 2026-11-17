@@ -46,9 +46,6 @@ export const submitInvoice = asyncHandler(async (req, res) => {
   if (!po || (user.role === ROLES.VENDOR && po.vendor.toString() !== user.vendor)) {
     throw ApiError.notFound('Purchase order');
   }
-  if (user.role === ROLES.VENDOR && po.status === PO_STATUS.ISSUED) {
-    throw ApiError.unprocessable('Acknowledge this PO before submitting an invoice against it');
-  }
   if (!PO_INVOICEABLE_STATUSES.includes(po.status)) throw ApiError.unprocessable(`Cannot invoice a PO that is ${po.status}`);
   if (await Invoice.exists({ vendor: po.vendor, invoiceNumber: header.invoiceNumber.trim().toUpperCase() })) {
     throw ApiError.conflict('Duplicate invoice blocked: this vendor has already submitted this invoice number');
@@ -57,7 +54,7 @@ export const submitInvoice = asyncHandler(async (req, res) => {
   const lines = items.map((line: { poItemId: string; quantity: number; unitPrice: number; taxRate: number }) => {
     const poItem = po.items.find((i) => i._id.equals(line.poItemId));
     if (!poItem) throw ApiError.unprocessable(`PO line ${line.poItemId} not found`);
-    return { poItem: poItem._id, description: poItem.description, quantity: line.quantity, unitPrice: line.unitPrice, taxRate: line.taxRate };
+    return { poItem: poItem._id, title: poItem.title, description: poItem.description, quantity: line.quantity, unitPrice: line.unitPrice, taxRate: line.taxRate };
   });
 
   if (user.role === ROLES.VENDOR) {

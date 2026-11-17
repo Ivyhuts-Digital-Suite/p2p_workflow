@@ -5,6 +5,7 @@ import adminRoutes from '../modules/admin/admin.routes';
 import auditRoutes from '../modules/audit/audit.routes';
 import authRoutes from '../modules/auth/auth.routes';
 import catalogRoutes from '../modules/catalog/catalog.routes';
+import chatRoutes from '../modules/chat/chat.routes';
 import grnRoutes from '../modules/grn/grn.routes';
 import invoiceRoutes from '../modules/invoice/invoice.routes';
 import journeyRoutes from '../modules/journey/journey.routes';
@@ -43,5 +44,6 @@ router.use('/treasury', treasuryRoutes); //        Module 6
 router.use('/audit', auditRoutes);
 router.use('/journey', journeyRoutes);
 router.use('/catalog', catalogRoutes);
+router.use('/chat', chatRoutes);
 
 export default router;
