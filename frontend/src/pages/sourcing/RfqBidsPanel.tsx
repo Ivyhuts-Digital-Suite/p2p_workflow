@@ -76,12 +76,12 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
   };
 
   return (
-    <Modal title={`Select ${bid.vendor.companyName}`} onClose={onClose}>
+    <Modal title={biddingOpen ? `Close bidding and select ${bid.vendor.companyName}` : `Select ${bid.vendor.companyName}`} onClose={onClose}>
       <form className="form" onSubmit={onSubmit}>
         <ErrorBanner message={error} onClose={() => setError(null)} />
         <ul className="item-list">
           {bid.items.map((line) => (
-            <li key={line.rfqItem} title={line.description}>
+            <li key={line.rfqItem}>
               <strong>{lineName(line)}</strong> × {line.quantity} {line.uom}
             </li>
           ))}
@@ -132,7 +132,7 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
         ))}
         {biddingOpen && (
           <div className="alert alert-warning">
-            <span>Bidding is open until {formatDateTime(rfq.closeAt)}. Selecting this vendor now closes it for every vendor.</span>
+            <span>Bidding is open until {formatDateTime(rfq.closeAt)}. Confirming closes bidding for all vendors and awards {bid.vendor.companyName} immediately.</span>
           </div>
         )}
         <p className="muted small">Selecting this vendor generates the purchase order. Within your DoA authority it is approved and issued at once; above it, it goes to the HOD or Finance.</p>
@@ -147,7 +147,7 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
             </button>
           ) : (
             <button className="btn btn-primary" disabled={busy}>
-              {budget ? 'Accept the overrun and select' : 'Select vendor'}
+              {budget ? 'Accept the overrun and select' : biddingOpen ? 'Close Bid & Select Vendor' : 'Select vendor'}
             </button>
           )}
         </div>
@@ -228,7 +228,7 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
                 <td>
                   <ul className="item-list">
                     {bid.items.map((line) => (
-                      <li key={line.rfqItem} title={line.description}>
+                      <li key={line.rfqItem}>
                         <strong>{lineName(line)}</strong> × {line.quantity} {line.uom}
                         <span className="muted">
                           {' '}
@@ -253,7 +253,7 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
                 <td className="row-actions">
                   {canAward && bid.status === 'SUBMITTED' && (
                     <button className="btn btn-sm btn-primary" disabled={action.busy} onClick={() => setAwarding(bid)}>
-                      Select vendor
+                      {biddingLive ? 'Close Bid & Select Vendor' : 'Select vendor'}
                     </button>
                   )}
                   {canManage && bid.status === 'AWARDED' && !rfq.purchaseOrder && (

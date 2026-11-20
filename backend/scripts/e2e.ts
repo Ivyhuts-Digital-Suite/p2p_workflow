@@ -972,9 +972,14 @@ async function main() {
   check('the catalog suggests a bought item, with the last purchase price', laptop?.uom === 'EA' && laptop.estimatedUnitPrice === 48000, laptop);
   const forceps = (await searchFor('Forceps')).body[0];
   check('an item suggests its unit and price', forceps?.description === 'Forceps set' && forceps.uom === 'EA' && forceps.estimatedUnitPrice === 200, forceps);
-  await call('POST', '/requisitions', t.requester, { department: it._id, title: 'Coded item', priority: 'LOW', items: [{ itemCode: 'SYR-10', description: 'Syringe 10ml luer', quantity: 1, uom: 'BOX', estimatedUnitPrice: 75 }] });
+  // Item codes are gone: one an old client still sends is ignored, and the line keeps a single name.
+  const coded = await call('POST', '/requisitions', t.requester, { department: it._id, title: 'Coded item', priority: 'LOW', items: [{ itemCode: 'SYR-10', description: 'Syringe 10ml luer', quantity: 1, uom: 'BOX', estimatedUnitPrice: 75 }] });
+  check('an item code sent on a PR line is not stored', coded.status === 201 && coded.body.items[0].itemCode === undefined && coded.body.items[0].description === 'Syringe 10ml luer', coded.body.items);
   const syringe = (await searchFor('syringe 10')).body[0];
-  check('it fills in the item code', syringe?.itemCode === 'SYR-10' && syringe.uom === 'BOX' && syringe.estimatedUnitPrice === 75, syringe);
+  check('a suggestion fills in the unit and price, with no item code', syringe?.description === 'Syringe 10ml luer' && syringe.itemCode === undefined && syringe.uom === 'BOX' && syringe.estimatedUnitPrice === 75, syringe);
+  for (const path of ['/requisitions', '/sourcing/rfqs', '/purchase-orders']) {
+    check(`no item code anywhere in ${path}`, !JSON.stringify((await call('GET', path, t.procurement)).body).includes('itemCode'));
+  }
   check('a short search returns nothing', (await searchFor('a')).body.length === 0);
   check('search text is taken literally', (await searchFor('(*[')).status === 200);
   check('vendors cannot search the catalog', (await searchFor('lapt', 'vendor1')).status === 403);
@@ -1272,6 +1277,59 @@ async function main() {
   const atRelease = await trackStep();
   check('payment release waits at Finance, by name', atRelease.steps.find((st: any) => st.state === 'current').label === 'Payment release' && /Finance \(Farhan/.test(atRelease.message), atRelease);
   check('a payment waits on Finance in the queue too', ((await call('GET', '/treasury/queue', t.finance)).body.awaitingRelease as any[]).find((p) => p._id === trackTax.body.payment._id).pendingAt.role === 'FINANCE');
+  check('Finance is told to release the payment', atRelease.yourAction && atRelease.actionLabel === 'Release payment', atRelease);
+  check('Finance was told to verify the matched invoice', atMatch.actionLabel === 'Verify invoice', atMatch);
+
+  // ---- "Your action" says what to do; a passive wait is never shown as the user's action ----------------
+  const cardFor = async (who: string, reference: string) => ((await journeyFor(who)).tracks as any[]).find((tr) => tr.reference === reference);
+  // The dashboard lists a few cards, actions first; a PR's own journey always has its card.
+  const journeyCard = async (who: string, prId: string) => (await call('GET', `/requisitions/${prId}/journey`, t[who])).body;
+  const labelPr = await approvedPr('Action labels', 'GOODS', 1, 200000);
+  const labelRfq = await publishedRfq('Action labels RFQ', labelPr._id);
+  const noBids = await journeyCard('procurement', labelPr._id);
+  check('bidding open with no bids: Procurement is only waiting for vendor bids', !!noBids && !noBids.yourAction && noBids.actionLabel === undefined && noBids.message === 'Waiting for vendor bids', noBids);
+  const labelBid = await placeBid(labelRfq, 'vendor1', 190000);
+  const withBids = await journeyCard('procurement', labelPr._id);
+  check('bidding open with a bid in: Close bid & select vendor', withBids?.yourAction && withBids.actionLabel === 'Close bid & select vendor', withBids);
+  check('…and the dashboard card says the same', (await cardFor('procurement', labelPr.prNumber))?.actionLabel === 'Close bid & select vendor');
+  const hodDuringBids = await journeyCard('hod.it', labelPr._id);
+  check('the HOD does not see Procurement\'s selection as their action', !!hodDuringBids && !hodDuringBids.yourAction && hodDuringBids.actionLabel === undefined, hodDuringBids);
+  await call('POST', `/sourcing/rfqs/${labelRfq._id}/close`, t.procurement);
+  const afterClose = await journeyCard('procurement', labelPr._id);
+  check('bidding closed, no vendor yet: Select vendor', afterClose?.yourAction && afterClose.actionLabel === 'Select vendor', afterClose);
+  const emptyPr = await approvedPr('No bids label', 'GOODS', 1, 100);
+  const emptyRfq = await publishedRfq('No bids label RFQ', emptyPr._id);
+  await call('POST', `/sourcing/rfqs/${emptyRfq._id}/close`, t.procurement);
+  const noBidCard = await journeyCard('procurement', emptyPr._id);
+  check('bidding closed with no bids: No bids received, and nothing to select', !!noBidCard && !noBidCard.yourAction && noBidCard.actionLabel === undefined && noBidCard.message === 'No bids received', noBidCard);
+  const labelPo = (await call('POST', `/sourcing/rfqs/${labelRfq._id}/award`, t.procurement, { bidId: labelBid.body._id })).body.po;
+  check('(the label PO waits for the HOD)', labelPo?.status === 'PENDING_APPROVAL', labelPo);
+  const hodPoCard = await cardFor('hod.it', labelPo.poNumber);
+  check('the HOD is told to approve the PO', hodPoCard?.yourAction && hodPoCard.actionLabel === 'Approve PO', hodPoCard);
+  const procPoCard = await journeyCard('procurement', labelPr._id);
+  check('Procurement waits on the HOD for that PO', !!procPoCard && !procPoCard.yourAction && /HOD/.test(procPoCard.message), procPoCard);
+
+  const toApprove = await call('POST', '/requisitions', t.requester, { department: it._id, title: 'Approve me label', priority: 'LOW', items: [{ description: 'Gauze roll', quantity: 1, uom: 'EA', estimatedUnitPrice: 50 }] });
+  const hodPrCard = await cardFor('hod.it', toApprove.body.prNumber);
+  check('the HOD is told to approve the PR', hodPrCard?.yourAction && hodPrCard.actionLabel === 'Approve PR', hodPrCard);
+  const requesterPrCard = await cardFor('requester', toApprove.body.prNumber);
+  check('the requester waits for the HOD instead', !!requesterPrCard && !requesterPrCard.yourAction && /HOD/.test(requesterPrCard.message), requesterPrCard);
+
+  const bidRfq = await publishedRfq('Bid label RFQ', (await approvedPr('Bid label', 'GOODS', 1, 100))._id);
+  const vendorBidCard = ((await journeyFor('vendor2')).tracks as any[]).find((tr) => tr.rfqId === bidRfq._id);
+  check('a vendor with an open RFQ is told to submit a bid', vendorBidCard?.yourAction && vendorBidCard.actionLabel === 'Submit bid', vendorBidCard);
+  const grnLabelPo = (await acceptedPo('GRN label', 'GOODS', 1, 100)).po;
+  const storeLabelCard = await cardFor('store', grnLabelPo.poNumber);
+  check('the Store is told to record the GRN', storeLabelCard?.yourAction && storeLabelCard.actionLabel === 'Record GRN', storeLabelCard);
+  const financeWaitsGrn = await cardFor('finance', grnLabelPo.poNumber);
+  check('Finance waits for the GRN instead', !!financeWaitsGrn && !financeWaitsGrn.yourAction && /Store/.test(financeWaitsGrn.message), financeWaitsGrn);
+
+  // Every role: an action card has an instruction, never a bare step name; any other card has none.
+  const BARE_STEPS = ['Bidding', 'Bidding closed', 'Closed', 'Short-closed', 'PR raised', 'RFQ published', 'Vendor selected', 'PO generated', 'Goods receipt & inspection', 'Invoice', 'RFQ received'];
+  for (const who of accounts) {
+    const tracks = (await journeyFor(who)).tracks as any[];
+    check(`${who}: every "Your action" names what to do, and only action cards have one`, tracks.every((tr) => (tr.yourAction ? typeof tr.actionLabel === 'string' && !BARE_STEPS.includes(tr.actionLabel) : tr.actionLabel === undefined)), tracks.map((tr) => [tr.reference, tr.yourAction, tr.actionLabel]));
+  }
 
   // An old record naming a merged role, before the migration has moved it, still points at the role doing that work now.
   const oldStep = await acceptedPo('Old approval record', 'GOODS', 1, 100);

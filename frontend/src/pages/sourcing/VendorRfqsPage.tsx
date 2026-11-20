@@ -6,7 +6,7 @@ import { Card, Empty, ErrorBanner, Page, StatusBadge } from '../../components/ui
 import { useAction, useApi } from '../../hooks/useApi';
 import { LICENCE_LABELS } from '../../types';
 import type { Rfq, Vendor } from '../../types';
-import { formatDateTime } from '../../utils/format';
+import { formatDateTime, productName } from '../../utils/format';
 
 const GST_RATES = [0, 5, 12, 18, 28];
 
@@ -72,7 +72,7 @@ function BidForm({ rfq, vendor }: { rfq: Rfq; vendor: Vendor | null }) {
       <table className="table">
         <thead>
           <tr>
-            <th>Item</th>
+            <th>Item / Product Name</th>
             <th>Qty</th>
             <th>Unit price (pre-tax)</th>
             <th>GST %</th>
@@ -86,8 +86,7 @@ function BidForm({ rfq, vendor }: { rfq: Rfq; vendor: Vendor | null }) {
             return (
               <tr key={item._id}>
                 <td>
-                  {item.title || item.description}
-                  {item.title && <div className="muted small">{item.description}</div>}
+                  {productName(item)}
                   {item.specifications && <div className="muted small">{item.specifications}</div>}
                 </td>
                 <td>
@@ -157,7 +156,7 @@ export function VendorRfqsPage() {
             <div>
               <span className="mono small">{rfq.rfqNumber}</span> <strong>{rfq.title}</strong>
               <div className="muted small">
-                {rfq.items.map((i) => `${i.title?.trim() || i.description} × ${i.quantity} ${i.uom}`).join(', ')} · Closes {formatDateTime(rfq.closeAt)}
+                {rfq.items.map((i) => `${productName(i)} × ${i.quantity} ${i.uom}`).join(', ')} · Closes {formatDateTime(rfq.closeAt)}
               </div>
               {rfq.status === 'AWARDED' && (
                 <div className="small">

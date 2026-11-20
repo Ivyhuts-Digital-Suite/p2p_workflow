@@ -6,9 +6,9 @@ import { Card, Empty, ErrorBanner, Page, StatusBadge } from '../../components/ui
 import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
 import type { Payment } from '../../types';
-import { formatDate, formatDateTime, formatMoney } from '../../utils/format';
+import { formatDate, formatDateTime, formatMoney, productName } from '../../utils/format';
 
-const itemsOf = (p: Payment) => p.invoice?.items?.map((i) => i.description).join(', ') || '-';
+const itemsOf = (p: Payment) => p.invoice?.items?.map(productName).join(', ') || '-';
 const OVERRIDABLE = ['PRICE_VARIANCE', 'TAX_RATE_MISMATCH', 'TOTAL_MISMATCH'];
 
 export function TreasuryPage() {
@@ -67,7 +67,7 @@ export function TreasuryPage() {
                     </td>
                     <td>{inv.vendor?.companyName}</td>
                     <td className="mono">{inv.purchaseOrder?.poNumber}</td>
-                    <td>{inv.items.map((i) => i.description).join(', ')}</td>
+                    <td>{inv.items.map(productName).join(', ')}</td>
                     <td className="num">
                       <PriceBreakdown compact actual={inv.subtotal} tax={inv.gstAmount} total={inv.total} />
                     </td>
@@ -180,7 +180,7 @@ export function TreasuryPage() {
                       {pr.department?.code} · {pr.requester?.name}
                     </div>
                   </td>
-                  <td>{pr.items.map((i) => i.description).join(', ')}</td>
+                  <td>{pr.items.map(productName).join(', ')}</td>
                   <td>{pr.emergencyReason}</td>
                   <td className="mono">{pr.purchaseOrder?.poNumber ?? '-'}</td>
                   <td className="num">
@@ -240,7 +240,7 @@ export function TreasuryPage() {
                     )}
                   </td>
                   <td>{inv.vendor?.companyName}</td>
-                  <td>{inv.items.map((i) => i.description).join(', ')}</td>
+                  <td>{inv.items.map(productName).join(', ')}</td>
                   <td className="mono small">
                     {inv.vendor?.gstin ?? '-'}
                     <br />

@@ -43,7 +43,6 @@ export async function vendorRfqViews(rfqs: RfqDocument[], user: AuthUser) {
     department: rfq.department,
     items: rfq.items.map((i) => ({
       _id: i._id,
-      itemCode: i.itemCode,
       title: i.title,
       description: i.description,
       quantity: i.quantity,

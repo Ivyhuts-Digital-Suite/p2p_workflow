@@ -3,7 +3,7 @@ import { sourcingApi, vendorApi } from '../../api/services';
 import { ErrorBanner } from '../../components/ui';
 import { useAction, useApi } from '../../hooks/useApi';
 import type { Requisition } from '../../types';
-import { formatMoney } from '../../utils/format';
+import { formatMoney, productName } from '../../utils/format';
 
 const defaultClose = () => {
   const d = new Date(Date.now() + 3 * 86_400_000);
@@ -61,8 +61,7 @@ export function CreateRfqForm({ onCreated, onCancel, fromPr }: { onCreated: () =
         <table className="table inner">
           <thead>
             <tr>
-              <th>Item</th>
-              <th>Item code</th>
+              <th>Item / Product Name</th>
               <th className="num">Qty</th>
               <th className="num">Est. unit price</th>
               <th className="num">Estimate</th>
@@ -71,11 +70,7 @@ export function CreateRfqForm({ onCreated, onCancel, fromPr }: { onCreated: () =
           <tbody>
             {fromPr.items.map((i, index) => (
               <tr key={i._id ?? index}>
-                <td>
-                  {i.title || i.description}
-                  {i.title && <div className="muted small">{i.description}</div>}
-                </td>
-                <td className="mono">{i.itemCode ?? '-'}</td>
+                <td>{productName(i)}</td>
                 <td className="num">
                   {i.quantity} {i.uom}
                 </td>

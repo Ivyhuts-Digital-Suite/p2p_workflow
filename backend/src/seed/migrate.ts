@@ -3,6 +3,7 @@ import { MASTER_ROLES, ROLES } from '../constants/roles';
 import { PO_STATUS, RFQ_STATUS } from '../constants/status';
 import { Bid } from '../models/Bid';
 import { PurchaseOrder } from '../models/PurchaseOrder';
+import { PurchaseRequisition } from '../models/PurchaseRequisition';
 import { RFQ } from '../models/RFQ';
 import { User } from '../models/User';
 import { evaluateRfqBids } from '../services/bidEvaluation.service';
@@ -17,6 +18,11 @@ const DEMO_PASSWORD = 'Password@123';
 export async function migrateDatabase(): Promise<void> {
   // QC merged into the Store, and AP and Treasury into Finance.
   await consolidateRoles();
+
+  // Item codes are no longer used: take them off existing lines so no API response carries them.
+  for (const collection of [PurchaseRequisition.collection, RFQ.collection, PurchaseOrder.collection]) {
+    await collection.updateMany({ 'items.itemCode': { $exists: true } }, { $unset: { 'items.$[].itemCode': '' } });
+  }
 
   // A seeded development database also gets the new demo account.
   if (!env.isProduction && (await User.exists({ email: 'admin@p2p.local' })) && !(await User.exists({ role: ROLES.AUDITOR }))) {

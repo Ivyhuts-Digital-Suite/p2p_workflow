@@ -70,9 +70,8 @@ export function SourcingPage() {
                   <td>
                     <ul className="item-list">
                       {rfq.items.map((i) => (
-                        <li key={i._id} title={i.description}>
+                        <li key={i._id}>
                           <strong>{productName(i)}</strong> × {i.quantity} {i.uom}
-                          {i.title && <div className="muted small">{i.description}</div>}
                         </li>
                       ))}
                     </ul>

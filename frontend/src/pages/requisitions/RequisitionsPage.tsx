@@ -59,7 +59,7 @@ function EmergencyPurchaseDialog({ pr, onClose, onDone }: { pr: Requisition; onC
         <table className="table">
           <thead>
             <tr>
-              <th>Item</th>
+              <th>Item / Product Name</th>
               <th className="num">Qty</th>
               <th className="num">Estimate</th>
               <th>Quoted unit price</th>
@@ -70,14 +70,13 @@ function EmergencyPurchaseDialog({ pr, onClose, onDone }: { pr: Requisition; onC
               <tr key={i._id}>
                 <td>
                   {productName(i)}
-                  {i.title && <div className="muted small">{i.description}</div>}
                 </td>
                 <td className="num">
                   {i.quantity} {i.uom}
                 </td>
                 <td className="num">{formatMoney(i.estimatedUnitPrice)}</td>
                 <td>
-                  <input type="number" min={0} step="any" required value={priceFor(i._id)} aria-label={`Unit price for ${i.description}`} onChange={(e) => setPrices((p) => ({ ...p, [i._id!]: Number(e.target.value) }))} />
+                  <input type="number" min={0} step="any" required value={priceFor(i._id)} aria-label={`Unit price for ${productName(i)}`} onChange={(e) => setPrices((p) => ({ ...p, [i._id!]: Number(e.target.value) }))} />
                 </td>
               </tr>
             ))}
@@ -322,9 +321,8 @@ export function RequisitionsPage() {
                 <td>
                   <ul className="item-list">
                     {pr.items.map((i) => (
-                      <li key={i._id} title={`${ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}: ${i.description}`}>
+                      <li key={i._id} title={ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}>
                         <strong>{productName(i)}</strong> × {i.quantity} {i.uom}
-                        {i.title && <div className="muted small">{i.description}</div>}
                       </li>
                     ))}
                   </ul>

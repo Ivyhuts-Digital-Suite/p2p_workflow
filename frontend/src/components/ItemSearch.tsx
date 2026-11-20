@@ -4,8 +4,8 @@ import type { CatalogItem } from '../types';
 import { formatMoney } from '../utils/format';
 
 /**
- * A description field that suggests items the hospital already stocks or buys. Picking one hands back its
- * item code, unit and usual price; typing something new is still allowed.
+ * The item / product name field. It suggests items the hospital already stocks or buys; picking one hands
+ * back its unit and usual price. Typing something new is still allowed.
  */
 export function ItemSearch({ value, onChange, onPick }: { value: string; onChange: (text: string) => void; onPick: (item: CatalogItem) => void }) {
   const [matches, setMatches] = useState<CatalogItem[]>([]);
@@ -51,6 +51,7 @@ export function ItemSearch({ value, onChange, onPick }: { value: string; onChang
         aria-expanded={open}
         aria-autocomplete="list"
         placeholder="Type to search items"
+        aria-label="Item / Product Name"
         onChange={(e) => {
           typed.current = true;
           onChange(e.target.value);
@@ -88,7 +89,7 @@ export function ItemSearch({ value, onChange, onPick }: { value: string; onChang
             >
               <span>{item.description}</span>
               <span className="muted small">
-                {[item.itemCode, item.uom, item.estimatedUnitPrice !== undefined ? formatMoney(item.estimatedUnitPrice) : null].filter(Boolean).join(' · ')}
+                {[item.uom, item.estimatedUnitPrice !== undefined ? formatMoney(item.estimatedUnitPrice) : null].filter(Boolean).join(' · ')}
               </span>
             </li>
           ))}

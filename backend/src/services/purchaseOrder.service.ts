@@ -82,7 +82,6 @@ export async function preparePoFromBid(bid: BidDocument, rfq: RfqDocument, terms
     if (!rfqItem) throw ApiError.unprocessable('Bid references an unknown RFQ line');
     return {
       rfqItem: rfqItem._id,
-      itemCode: rfqItem.itemCode,
       title: rfqItem.title,
       description: rfqItem.description,
       quantity: line.quantity,

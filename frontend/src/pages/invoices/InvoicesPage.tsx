@@ -1,4 +1,4 @@
-import { FormEvent, Fragment, useState } from 'react';
+import { Fragment, useState } from 'react';
 import { invoiceApi } from '../../api/services';
 import { askReason, Modal } from '../../components/overlays';
 import { LockBanner, PriceBreakdown } from '../../components/Workflow';
@@ -6,79 +6,10 @@ import { Empty, ErrorBanner, Page, StatusBadge } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
 import type { Invoice } from '../../types';
-import { formatDate, formatMoney } from '../../utils/format';
+import { formatDate, formatMoney, productName } from '../../utils/format';
 import { SubmitInvoiceForm } from './SubmitInvoiceForm';
 
 const OPEN = ['SUBMITTED', 'EXCEPTION', 'MATCHED'];
-const NOTES_ALLOWED = ['SUBMITTED', 'EXCEPTION', 'MATCHED', 'BOOKED'];
-
-function NoteDialog({ invoice, onClose, onDone }: { invoice: Invoice; onClose: () => void; onDone: () => unknown }) {
-  const [type, setType] = useState<'debit' | 'credit'>('debit');
-  const [taxableAmount, setTaxableAmount] = useState(0);
-  const [gstAmount, setGstAmount] = useState(0);
-  const [reason, setReason] = useState('');
-  const [vendorReference, setVendorReference] = useState('');
-  const action = useAction(async () => {
-    onClose();
-    await onDone();
-  });
-
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    void action.run(
-      () => invoiceApi.addNote(invoice._id, type, { taxableAmount, gstAmount, reason, vendorReference: vendorReference || undefined }),
-      `${type === 'debit' ? 'Debit' : 'Credit'} note added to ${invoice.internalRef}`,
-    );
-  };
-
-  return (
-    <Modal title={`Add a note to ${invoice.internalRef}`} onClose={onClose}>
-      <form className="form" onSubmit={onSubmit}>
-        <ErrorBanner message={action.error} onClose={action.clearError} />
-        <label>
-          Type
-          <select value={type} onChange={(e) => setType(e.target.value as 'debit' | 'credit')}>
-            <option value="debit">Debit note (raised by us)</option>
-            <option value="credit">Credit note (issued by the vendor)</option>
-          </select>
-        </label>
-        <div className="grid-2">
-          <label>
-            Actual amount
-            <input type="number" min={0.01} step="any" value={taxableAmount} onChange={(e) => setTaxableAmount(Number(e.target.value))} required />
-          </label>
-          <label>
-            Tax amount
-            <input type="number" min={0} step="any" value={gstAmount} onChange={(e) => setGstAmount(Number(e.target.value))} required />
-          </label>
-        </div>
-        <p>
-          <PriceBreakdown actual={taxableAmount} tax={gstAmount} total={taxableAmount + gstAmount} />
-        </p>
-        {type === 'credit' && (
-          <label>
-            Vendor's credit note number
-            <input value={vendorReference} onChange={(e) => setVendorReference(e.target.value)} />
-          </label>
-        )}
-        <label>
-          Reason
-          <textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} required minLength={3} />
-        </label>
-        <p className="muted small">This reduces what is paid on the invoice, and the base for TDS.</p>
-        <div className="form-footer">
-          <div className="spacer" />
-          <button type="button" className="btn btn-ghost" onClick={onClose}>
-            Cancel
-          </button>
-          <button className="btn btn-primary" disabled={action.busy}>
-            Add note
-          </button>
-        </div>
-      </form>
-    </Modal>
-  );
-}
 
 export function InvoicesPage() {
   const { user, hasRole } = useAuth();
@@ -87,7 +18,6 @@ export function InvoicesPage() {
   const [showForm, setShowForm] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [noting, setNoting] = useState<Invoice | null>(null);
   const { data, error, reload } = useApi(() => invoiceApi.list(statusFilter ? { status: statusFilter } : undefined), [statusFilter]);
   const action = useAction(reload);
 
@@ -95,9 +25,6 @@ export function InvoicesPage() {
     const out: JSX.Element[] = [];
     if (OPEN.includes(inv.status)) {
       out.push(
-        <button key="m" className="btn btn-sm" disabled={action.busy} onClick={() => void action.run(() => invoiceApi.match(inv._id), `Match re-run on ${inv.internalRef}`)}>
-          Re-run match
-        </button>,
         <button
           key="b"
           className="btn btn-sm btn-primary"
@@ -117,13 +44,6 @@ export function InvoicesPage() {
           }}
         >
           Reject
-        </button>,
-      );
-    }
-    if (NOTES_ALLOWED.includes(inv.status)) {
-      out.push(
-        <button key="n" className="btn btn-sm" disabled={action.busy} onClick={() => setNoting(inv)}>
-          Add note
         </button>,
       );
     }
@@ -195,7 +115,7 @@ export function InvoicesPage() {
                     <ul className="item-list">
                       {inv.items.map((line, index) => (
                         <li key={index}>
-                          <strong>{line.title?.trim() || line.description}</strong> × {line.quantity}
+                          <strong>{productName(line)}</strong> × {line.quantity}
                         </li>
                       ))}
                     </ul>
@@ -257,7 +177,6 @@ export function InvoicesPage() {
           </tbody>
         </table>
       )}
-      {noting && <NoteDialog invoice={noting} onClose={() => setNoting(null)} onDone={reload} />}
     </Page>
   );
 }

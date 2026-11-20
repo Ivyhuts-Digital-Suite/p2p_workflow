@@ -6,7 +6,6 @@ import { calcOrderTotals, round2 } from '../utils/money';
 export interface IPoItem {
   _id: Types.ObjectId;
   rfqItem?: Types.ObjectId;
-  itemCode?: string;
   /** Product title, shown as "title x quantity". Optional: older lines have none and show the description. */
   title?: string;
   description: string;
@@ -64,7 +63,6 @@ export type PurchaseOrderDocument = HydratedDocument<IPurchaseOrder>;
 
 const poItemSchema = new Schema<IPoItem>({
   rfqItem: Schema.Types.ObjectId,
-  itemCode: String,
   title: String,
   description: { type: String, required: true },
   quantity: { type: Number, required: true, min: 0.0001 },

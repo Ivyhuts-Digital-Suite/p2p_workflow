@@ -9,7 +9,7 @@ export interface IInventoryBatch {
 }
 
 export interface IInventoryItem {
-  /** Item code when available, otherwise the normalised description */
+  /** The normalised item name */
   itemKey: string;
   description: string;
   warehouse: string;

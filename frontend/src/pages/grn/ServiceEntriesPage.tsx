@@ -6,7 +6,7 @@ import { Empty, ErrorBanner, Page, StatusBadge } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
 import { NEEDS_COMMISSIONING } from '../../types';
-import { formatDate, poLabel } from '../../utils/format';
+import { formatDate, poLabel, productName } from '../../utils/format';
 
 const SIGNABLE = ['ISSUED', 'ACKNOWLEDGED', 'PARTIALLY_RECEIVED', 'RECEIVED'];
 const today = () => new Date().toISOString().slice(0, 10);
@@ -85,7 +85,7 @@ export function ServiceEntriesPage() {
                   <option value="">Select line…</option>
                   {lines.map((i) => (
                     <option key={i._id} value={i._id}>
-                      {i.description} ({i.itemType === 'SERVICE' ? `${i.receivedQty} of ${i.quantity} accepted` : `${i.commissionedQty ?? 0} of ${i.receivedQty} delivered commissioned`})
+                      {productName(i)} ({i.itemType === 'SERVICE' ? `${i.receivedQty} of ${i.quantity} accepted` : `${i.commissionedQty ?? 0} of ${i.receivedQty} delivered commissioned`})
                     </option>
                   ))}
                 </select>

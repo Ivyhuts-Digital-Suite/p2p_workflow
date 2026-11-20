@@ -204,7 +204,7 @@ export function GoodsReceiptPage() {
               <table className="table">
                 <thead>
                   <tr>
-                    <th>Item</th>
+                    <th>Item / Product Name</th>
                     <th className="num">Ordered</th>
                     <th className="num">Already received</th>
                     <th>Received now</th>
@@ -226,7 +226,6 @@ export function GoodsReceiptPage() {
                       <tr key={i._id}>
                         <td>
                           {productName(i)}
-                          {i.title && <div className="muted small">{i.description}</div>}
                           <div className="muted small">{ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}</div>
                         </td>
                         <td className="num">{i.quantity}</td>

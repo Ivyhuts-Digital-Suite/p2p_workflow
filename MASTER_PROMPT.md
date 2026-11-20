@@ -183,7 +183,7 @@ Fill in any missing enterprise steps, such as the GRN, quality inspection, parti
    - IT & Electronics
    - Maintenance & Facility Items
 9. **Item autocomplete:** typing an item description suggests matching items from the master catalog or inventory.
-10. **Auto-fill:** picking a suggestion fills in its Item Code, UOM (e.g. EA) and standard estimated unit price.
+10. **Auto-fill:** picking a suggestion fills in its UOM (e.g. EA) and standard estimated unit price. **[Item Code removed in Phase 29.]**
 11. **Justification dropdown:** common reasons such as "Urgent stock restock", "Monthly consumption items" and "Emergency clinical requirement", plus a custom text option.
 12. **Font:** Poppins on every page, component, button and modal.
 
@@ -330,7 +330,7 @@ Build the project for Vercel and list the environment variables it needs.
 6. **No vendor acknowledgement.** PO generated → Store GRN. Vendors can invoice as soon as the PO is issued. Vendors still see their POs.
 7. **Remove Short-close and Deactivate.** Remove the PO short-close action and the PR deactivate action completely (buttons, endpoints and UI). Leave the Admin user and DoA-rule activate/deactivate toggles untouched.
 8. **[Icon placement replaced in Phase 24]** **Universal chat icon.** A chat icon with an unread badge for every role (Requester, HODs, Procurement, Store, Finance, Auditor, Vendor, Admin). Counts are per user, exclude the user's own messages, and update on reading. Read receipts: ✓ sent, blue ✓✓ read, hover shows who read it and when. Each role sees only the conversations it is allowed to see.
-9. **Product title × quantity.** Item lines get an optional product title, shown as "Product title × quantity" in tables, with the description still available. Older lines fall back to the description.
+9. **[Replaced in Phase 29: one Item / Product Name field per line]** **Product title × quantity.** Item lines get an optional product title, shown as "Product title × quantity" in tables, with the description still available. Older lines fall back to the description.
 10. **Journey cards.** The PR/PO number in blue, then a labelled Title and a labelled Description. A PO's title is its RFQ title; a PR's description is its justification.
 11. **GRN PO dropdown.** Each option: PO number | PO title | vendor name | company | product | description | date and time. The value stays the PO ID.
 12. **Live bids first** on the Bidding Dashboard.
@@ -386,4 +386,68 @@ Build the project for Vercel and list the environment variables it needs.
 - Every internal message sent on that PR before the selection stays completely hidden from the vendor.
 - Internal staff (Requester, HOD, Procurement, Finance, Store, Admin, Auditor) keep the full history.
 - Once all tests pass, commit everything, including the Phase 27 changes, and push to `main`.
+
+## Phase 29: Remove Item Code; one Item / Product Name per line (20 Nov)
+
+**Strict constraints**
+- Do not change any P2P workflow logic, approval flows, status transitions, permissions or business rules.
+- Leave the New Purchase Requisition header fields exactly as they are: Title, Department, Priority, Business justification and the Emergency purchase checkbox.
+- Make no other UI, styling or feature changes.
+
+**Changes**
+1. **Remove Item Code completely**, in the frontend and backend:
+   - Pages, modals and line-item tables for PRs, RFQs and bids, POs, GRN and service sign-off, and invoices and the 3-way match.
+   - Mongoose schemas, controllers, validation, catalog suggestions, seed data and API payloads.
+   - Item codes already stored on existing lines are removed on start-up.
+   - Stock is keyed by the item name, as items without a code already were.
+2. **One Item / Product Name field per line**:
+   - The New PR line-item table becomes Item / Product Name (with the catalog autocomplete), Type, Qty, UoM, Est. unit price and Line total. The separate Item Code, Product title and Description columns are gone.
+   - Downstream RFQ, vendor bid, PO, GRN and invoice tables show that single name, with no description line under it.
+   - An older line with a separate product title shows, and edits as, that one name.
+3. Run the typechecks and update and run the existing tests.
+
+## Phase 30: Clear "Your action" labels and Close Bid & Select Vendor (20 Nov)
+
+**Strict constraints**
+- Do not commit or push.
+- Do not change workflow logic, validation, status transitions, permissions or business rules.
+- Change only labels and wording.
+
+**Changes**
+1. **Procurement's journey card during bidding:**
+   - RFQ open with 0 bids: "Waiting for vendor bids". This is a passive wait, so it is not shown as Procurement's action.
+   - RFQ open with 1 or more bids: "Your action: Close bid & select vendor".
+   - Bidding closed and no vendor awarded yet: "Your action: Select vendor".
+2. **RfqBidsPanel:**
+   - While bidding is open, the button next to each bid reads **"Close Bid & Select Vendor"**. The confirmation dialog says that confirming closes bidding for all vendors and awards that vendor immediately.
+   - Once bidding has closed, the button stays "Select vendor".
+3. **Audit "Your action" for every role and stage:**
+   - "Your action" names what the user actually does: Submit PR, Approve PR, Initiate/Publish RFQ, Close bid & select vendor, Select vendor, Approve the budget escalation, Create PO, Approve PO, Submit bid, Record GRN, Sign off the service/commissioning, Submit invoice, Verify invoice, Ratify the emergency purchase, Verify tax, Approve payment, Release payment, Invoice the rest of the PO.
+   - A passive wait is never shown as the user's action; the card shows what it is waiting for instead.
+   - Every other role sees the existing "pending at …" message.
+4. Update the journey-card and end-to-end tests, run the typechecks, and make sure every test passes. Leave the changes uncommitted.
+
+## Phase 31: "Your action" labels must show on the live dashboard (20 Nov)
+
+- The dashboard still showed raw step names ("Your action: Bidding", "Vendor selected", "Bid submitted").
+- Cause: the local API dev server was still running code from before Phase 27, because `tsx watch` misses file changes in the OneDrive folder. The card then fell back to the step name.
+- Fixes:
+  - The only place that renders "Your action" is the journey card (`TrackView`), used by the dashboard and the PR view. It never shows a raw step name: without an instruction from the server, it shows the card's waiting message instead.
+  - When bidding closes with 0 bids (by time or closed manually), Procurement sees "No bids received" as a wait, not "Select vendor".
+  - Restart or reload the dev servers so `localhost:5173` serves the latest code. Re-saving `backend/src/server.ts` makes `tsx watch` reload.
+- Verify with tests and typechecks, and against the running API. Do not commit or push.
+
+## Phase 32: Remove "Re-run match" from Finance's invoice list (20 Nov)
+
+- On the Invoices page (`/invoices`), remove the **Re-run match** button from the invoice action column.
+- Keep **Book liability**, **Reject** and **Add note**.
+- Do not change the backend 3-way match, the invoice approval workflow or any business rule.
+- Update the tests if needed, run the typechecks, and leave the changes uncommitted.
+
+## Phase 33: Remove "Add note" from Finance's invoice list (20 Nov)
+
+- On the Invoices page (`/invoices`), also remove the **Add note** button (debit/credit notes) from the invoice action column. Only **Book liability** and **Reject** remain.
+- Its dialog is then unused in the UI, so it goes too.
+- Do not change the backend invoice workflow, the 3-way match, the debit/credit note endpoints or any business rule.
+- Update the tests if needed, run the typechecks, and leave the changes uncommitted.
 

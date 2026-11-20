@@ -12,7 +12,6 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 interface CatalogItem {
   description: string;
-  itemCode?: string;
   uom: string;
   estimatedUnitPrice?: number;
 }
@@ -40,7 +39,6 @@ router.get(
         $group: {
           _id: { $toLower: `$${path}.description` },
           description: { $first: `$${path}.description` },
-          itemCode: { $first: `$${path}.itemCode` },
           uom: { $first: `$${path}.uom` },
           price: { $first: `$${path}.${price}` },
         },
@@ -50,7 +48,7 @@ router.get(
     const [ordered, requested, stocked] = await Promise.all([
       PurchaseOrder.aggregate(latest('items', 'unitPrice')),
       PurchaseRequisition.aggregate(latest('items', 'estimatedUnitPrice')),
-      InventoryItem.find({ description: pattern }).select('itemKey description uom').limit(25),
+      InventoryItem.find({ description: pattern }).select('description uom').limit(25),
     ]);
 
     const byName = new Map<string, CatalogItem>();
@@ -59,16 +57,14 @@ router.get(
       const known = byName.get(key);
       byName.set(key, {
         description: known?.description ?? item.description,
-        itemCode: known?.itemCode || item.itemCode || undefined,
         uom: known?.uom ?? item.uom,
         estimatedUnitPrice: known?.estimatedUnitPrice ?? item.estimatedUnitPrice,
       });
     };
     // Order matters: a real purchase price beats an estimate.
-    ordered.forEach((i) => add({ description: i.description, itemCode: i.itemCode, uom: i.uom ?? 'EA', estimatedUnitPrice: i.price }));
-    requested.forEach((i) => add({ description: i.description, itemCode: i.itemCode, uom: i.uom ?? 'EA', estimatedUnitPrice: i.price }));
-    // Stock keyed by description has no real item code.
-    stocked.forEach((i) => add({ description: i.description, itemCode: i.itemKey === i.description.trim().toUpperCase() ? undefined : i.itemKey, uom: i.uom }));
+    ordered.forEach((i) => add({ description: i.description, uom: i.uom ?? 'EA', estimatedUnitPrice: i.price }));
+    requested.forEach((i) => add({ description: i.description, uom: i.uom ?? 'EA', estimatedUnitPrice: i.price }));
+    stocked.forEach((i) => add({ description: i.description, uom: i.uom }));
 
     const results = [...byName.values()].sort((a, b) => {
       const starts = (x: CatalogItem) => (x.description.toLowerCase().startsWith(q.toLowerCase()) ? 0 : 1);

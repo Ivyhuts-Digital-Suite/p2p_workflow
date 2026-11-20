@@ -16,7 +16,6 @@ import { round2 } from '../utils/money';
 
 export interface IPrItem {
   _id: Types.ObjectId;
-  itemCode?: string;
   /** Product title, shown as "title x quantity". Optional: older lines have none and show the description. */
   title?: string;
   description: string;
@@ -84,7 +83,6 @@ export const auditEntrySchema = new Schema<IAuditEntry>(
 );
 
 const prItemSchema = new Schema<IPrItem>({
-  itemCode: { type: String, trim: true },
   title: { type: String, trim: true },
   description: { type: String, required: true, trim: true },
   category: String,

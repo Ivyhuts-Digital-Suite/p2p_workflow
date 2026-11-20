@@ -5,7 +5,7 @@ import { ErrorBanner, StatusBadge } from '../../components/ui';
 import { useApi } from '../../hooks/useApi';
 import type { Requisition } from '../../types';
 import { ITEM_TYPE_LABELS } from '../../types';
-import { formatMoney } from '../../utils/format';
+import { formatMoney, productName } from '../../utils/format';
 
 /** One PR: its whole journey from the start, its lines, and its conversation. */
 export function PrDetail({ pr }: { pr: Requisition }) {
@@ -24,9 +24,7 @@ export function PrDetail({ pr }: { pr: Requisition }) {
       <table className="table inner">
         <thead>
           <tr>
-            <th>Item code</th>
-            <th>Product title</th>
-            <th>Description</th>
+            <th>Item / Product Name</th>
             <th>Type</th>
             <th className="num">Qty</th>
             <th className="num">Est. unit price</th>
@@ -36,9 +34,7 @@ export function PrDetail({ pr }: { pr: Requisition }) {
         <tbody>
           {pr.items.map((i, index) => (
             <tr key={i._id ?? index}>
-              <td className="mono">{i.itemCode ?? '-'}</td>
-              <td>{i.title || <span className="muted">-</span>}</td>
-              <td>{i.description}</td>
+              <td>{productName(i)}</td>
               <td>{ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}</td>
               <td className="num">
                 {i.quantity} {i.uom}

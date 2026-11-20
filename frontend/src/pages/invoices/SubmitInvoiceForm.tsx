@@ -5,7 +5,7 @@ import { LockBanner, PriceBreakdown } from '../../components/Workflow';
 import { ErrorBanner } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
-import { poLabel } from '../../utils/format';
+import { poLabel, productName } from '../../utils/format';
 
 interface Line {
   quantity: number;
@@ -123,8 +123,7 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
                 return (
                   <tr key={i._id}>
                     <td>
-                      {i.title || i.description}
-                      {i.title && <div className="muted small">{i.description}</div>}
+                      {productName(i)}
                     </td>
                     <td className="num">{i.quantity}</td>
                     <td className="num">{openToBill(i)}</td>

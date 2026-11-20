@@ -157,9 +157,8 @@ export function PurchaseOrdersPage() {
                   <td>
                     <ul className="item-list">
                       {po.items.map((i) => (
-                        <li key={i._id} title={i.description}>
+                        <li key={i._id}>
                           <strong>{productName(i)}</strong> × {i.quantity} {i.uom}
-                          {i.title && <div className="muted small">{i.description}</div>}
                         </li>
                       ))}
                     </ul>
@@ -196,7 +195,7 @@ export function PurchaseOrdersPage() {
                       <table className="table inner">
                         <thead>
                           <tr>
-                            <th>Item</th>
+                            <th>Item / Product Name</th>
                             <th>Type</th>
                             <th className="num">Qty</th>
                             <th className="num">Unit price</th>
@@ -214,7 +213,6 @@ export function PurchaseOrdersPage() {
                               <tr key={i._id}>
                                 <td>
                                   {productName(i)}
-                                  {i.title && <div className="muted small">{i.description}</div>}
                                 </td>
                                 <td>{ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}</td>
                                 <td className="num">

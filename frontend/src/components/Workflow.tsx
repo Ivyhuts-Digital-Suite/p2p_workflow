@@ -233,7 +233,8 @@ export function TrackView({ track, withChat = false, unread = 0, onChatClosed }:
         </div>
         <span className="journey-message-wrap">
           <span className={`journey-message${track.yourAction ? ' journey-message-mine' : ''}`}>
-            {track.yourAction ? `Your action: ${track.steps.find((s) => s.state === 'current')?.label}` : track.message}
+            {/* Only ever an instruction from the server, never a bare step name; without one, say what the card is waiting on. */}
+            {track.yourAction && track.actionLabel ? `Your action: ${track.actionLabel}` : track.message}
           </span>
           <span className="journey-actions">
             {track.yourAction && <GoToTask step={track.steps.find((s) => s.state === 'current')?.label} />}

@@ -139,7 +139,7 @@ export const createGrn = asyncHandler(async (req, res) => {
   for (const line of grn.items) {
     if (line.acceptedQty === 0) continue;
     const poItem = po.items.find((i) => i._id.equals(line.poItem))!;
-    const itemKey = (poItem.itemCode ?? poItem.description).trim().toUpperCase();
+    const itemKey = poItem.description.trim().toUpperCase();
     await InventoryItem.findOneAndUpdate(
       { itemKey, warehouse },
       {

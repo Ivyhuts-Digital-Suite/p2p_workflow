@@ -47,7 +47,7 @@ async function settlePendingInspections() {
     const po = await PurchaseOrder.findById(inspection.purchaseOrder);
     const poItem = po?.items.find((i) => i._id.equals(inspection.poItem));
     await InventoryItem.findOneAndUpdate(
-      { itemKey: (poItem?.itemCode ?? inspection.description).trim().toUpperCase(), warehouse: inspection.warehouse },
+      { itemKey: inspection.description.trim().toUpperCase(), warehouse: inspection.warehouse },
       {
         $inc: { quantity: releasedQty },
         $set: { description: inspection.description, uom: poItem?.uom ?? 'EA', lastGrn: inspection.grn, lastReceivedAt: new Date() },

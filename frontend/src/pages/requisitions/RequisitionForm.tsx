@@ -8,14 +8,13 @@ import type { ItemType, PrItem, Requisition } from '../../types';
 import { ITEM_TYPE_LABELS } from '../../types';
 import { formatMoney } from '../../utils/format';
 
-const blankItem = (): PrItem => ({ title: '', description: '', quantity: 1, uom: 'EA', estimatedUnitPrice: 0, itemType: 'GOODS' });
+const blankItem = (): PrItem => ({ description: '', quantity: 1, uom: 'EA', estimatedUnitPrice: 0, itemType: 'GOODS' });
 const COMMON_JUSTIFICATIONS = ['Urgent stock restock', 'Monthly consumption items', 'Emergency clinical requirement'];
 const CUSTOM = 'CUSTOM';
 
-const toLine = ({ itemCode, title, description, category, quantity, uom, estimatedUnitPrice, itemType }: PrItem): PrItem => ({
-  itemCode,
-  title: title?.trim() || undefined,
-  description,
+/** One line for the form. An older line with a separate product title edits as that single name. */
+const toLine = ({ title, description, category, quantity, uom, estimatedUnitPrice, itemType }: PrItem): PrItem => ({
+  description: title?.trim() || description,
   category,
   quantity,
   uom,
@@ -124,9 +123,7 @@ export function RequisitionForm({ onCreated, onCancel, pr }: { onCreated: () => 
       <table className="table">
         <thead>
           <tr>
-            <th>Item code</th>
-            <th>Product title *</th>
-            <th>Description</th>
+            <th>Item / Product Name *</th>
             <th>Type</th>
             <th>Qty</th>
             <th>UoM</th>
@@ -139,26 +136,12 @@ export function RequisitionForm({ onCreated, onCancel, pr }: { onCreated: () => 
           {items.map((item, index) => (
             <tr key={index}>
               <td>
-                <input value={item.itemCode ?? ''} aria-label="Item code" onChange={(e) => updateItem(index, { itemCode: e.target.value || undefined })} />
-              </td>
-              <td>
-                <input
-                  value={item.title ?? ''}
-                  required
-                  maxLength={200}
-                  placeholder="e.g. Dell Latitude 5440 Laptop"
-                  aria-label="Product title"
-                  onChange={(e) => updateItem(index, { title: e.target.value })}
-                />
-              </td>
-              <td>
                 <ItemSearch
                   value={item.description}
                   onChange={(description) => updateItem(index, { description })}
                   onPick={(found) =>
                     updateItem(index, {
                       description: found.description,
-                      itemCode: found.itemCode ?? item.itemCode,
                       uom: found.uom || item.uom,
                       estimatedUnitPrice: found.estimatedUnitPrice ?? item.estimatedUnitPrice,
                     })

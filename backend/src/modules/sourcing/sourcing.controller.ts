@@ -90,7 +90,6 @@ export const createRfq = asyncHandler(async (req, res) => {
       requisitions: prs.map((p) => p._id),
       items: prs.flatMap((pr) =>
         pr.items.map((i) => ({
-          itemCode: i.itemCode,
           title: i.title,
           description: i.description,
           quantity: i.quantity,
@@ -386,7 +385,6 @@ export const emergencyPurchase = asyncHandler(async (req, res) => {
     department: pr.department,
     requisitions: [pr._id],
     items: pr.items.map((i) => ({
-      itemCode: i.itemCode,
       title: i.title,
       description: i.description,
       quantity: i.quantity,

@@ -6,7 +6,7 @@ import { ROLE_LABELS, navItemsFor } from '../config/navigation';
 import { useAuth } from '../context/AuthContext';
 import { Card, ErrorBanner, Page, Stat } from '../components/ui';
 import { useAction, useApi } from '../hooks/useApi';
-import { formatMoney } from '../utils/format';
+import { formatMoney, productName } from '../utils/format';
 import type { Role } from '../types';
 
 const ROLE_GUIDE: Record<Role, string[]> = {
@@ -48,7 +48,7 @@ function PaymentApprovals() {
             <tr key={p._id}>
               <td className="mono">{p.paymentRef}</td>
               <td>{p.vendor?.companyName}</td>
-              <td>{p.invoice?.items?.map((i) => i.description).join(', ')}</td>
+              <td>{p.invoice?.items?.map(productName).join(', ')}</td>
               <td className="num">
                 <PriceBreakdown compact actual={p.invoice?.subtotal} tax={p.invoice?.gstAmount} total={p.invoice?.total} />
               </td>

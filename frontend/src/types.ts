@@ -49,7 +49,6 @@ export const NEEDS_COMMISSIONING: string[] = ['EQUIPMENT', 'CAPITAL_EQUIPMENT'];
 
 export interface CatalogItem {
   description: string;
-  itemCode?: string;
   uom: string;
   estimatedUnitPrice?: number;
 }
@@ -112,6 +111,8 @@ export interface JourneyTrack {
   pendingAt?: PendingAt;
   message: string;
   yourAction: boolean;
+  /** What the user has to do when it is their action, e.g. "Approve PR" or "Record GRN" */
+  actionLabel?: string;
   prId?: string;
   /** The RFQ behind the track, for vendor conversations */
   rfqId?: string;
@@ -216,7 +217,6 @@ export interface BankDetails {
 
 export interface PrItem {
   _id?: string;
-  itemCode?: string;
   /** Product title; older lines have none and fall back to the description */
   title?: string;
   description: string;

@@ -40,6 +40,10 @@ interface RawStep {
   /** Consecutive steps with a group are shown together as one stage of the track */
   group?: string;
   detail?: string;
+  /** What the owner does at this step, as an instruction ("Approve PR"). Defaults to ACTION_WORDS. */
+  action?: string;
+  /** Set when the owner has nothing to do yet at this step: what they are waiting for ("Waiting for vendor bids") */
+  waiting?: string;
 }
 
 export interface JourneyStep {
@@ -60,8 +64,10 @@ export interface JourneyTrack {
   steps: JourneyStep[];
   pendingAt?: PendingAt;
   message: string;
-  /** True when the current step is the caller's to take */
+  /** True when the current step is the caller's to take now */
   yourAction: boolean;
+  /** What the caller has to do, when it is their action ("Approve PR", "Record GRN") */
+  actionLabel?: string;
   /** The PR behind this track, for its conversation. On a vendor track only once their PO is issued to them. */
   prId?: string;
   /** The RFQ behind this track, for the vendor conversations on it */
@@ -113,6 +119,26 @@ const STEP_WORDS: Record<string, [string, string]> = {
   'Selected by the buyer': ['You were selected', 'Waiting for the buyer'],
 };
 
+/** What the owner of each step does, as the instruction shown after "Your action:". */
+const ACTION_WORDS: Record<string, string> = {
+  'PR raised': 'Submit PR',
+  'RFQ published': 'Initiate RFQ',
+  'Vendor selected': 'Select vendor',
+  'Emergency PO': 'Raise the emergency PO',
+  'PO generated': 'Create PO',
+  'Goods receipt & inspection': 'Record GRN',
+  'Service sign-off': 'Sign off the service',
+  'Commissioning sign-off': 'Sign off commissioning',
+  Invoice: 'Submit invoice',
+  'Invoice verification & 3-way match': 'Verify invoice',
+  'Emergency ratification': 'Ratify the emergency purchase',
+  'Tax verification': 'Verify tax',
+  'Payment approval': 'Approve payment',
+  'Payment release': 'Release payment',
+  'Bid submitted': 'Submit bid',
+  'Bid withdrawn': 'Submit bid',
+};
+
 function stepWords(step: RawStep): [string, string] {
   const words = STEP_WORDS[step.label];
   if (words) return words;
@@ -131,9 +157,13 @@ function toTrack(id: string, reference: string, title: string, raw: RawStep[], u
     if (index === currentIndex) return { ...shown, state: s.blocked ? 'blocked' : 'current', status: s.blocked ?? s.note ?? pendingText };
     return { ...shown, state: 'locked', status: 'Upcoming' };
   });
+  const mine = !!current && !current.blocked && current.owner?.role === user.role;
+  // The owner of a step that is only waiting on someone else is told what it is waiting for, not given an action.
+  const waiting = mine ? current.waiting : undefined;
   const message = !current
     ? finished
-    : current.blocked ?? current.note ?? (current.owner ? `${current.kind} pending at ${current.owner.label}` : `${current.label} is in progress`);
+    : waiting ?? current.blocked ?? current.note ?? (current.owner ? `${current.kind} pending at ${current.owner.label}` : `${current.label} is in progress`);
+  const yourAction = mine && !waiting;
   return {
     id,
     reference,
@@ -142,7 +172,8 @@ function toTrack(id: string, reference: string, title: string, raw: RawStep[], u
     steps,
     pendingAt: current?.blocked ? undefined : current?.owner,
     message,
-    yourAction: !!current && !current.blocked && current.owner?.role === user.role,
+    yourAction,
+    actionLabel: yourAction ? current.action ?? ACTION_WORDS[current.label] ?? current.label : undefined,
     startedAt,
   };
 }
@@ -232,6 +263,7 @@ function deliveryAndPaymentSteps(po: IPurchaseOrder, records: PoRecords, at: Dir
     done: po.status === PO_STATUS.CLOSED || po.status === PO_STATUS.SHORT_CLOSED,
     // Everything paid so far, but not everything delivered or billed: the rest is still to come.
     owner: po.items.every((i) => i.receivedQty >= i.quantity) ? at(ROLES.VENDOR) : at(ROLES.STORE),
+    ...(po.items.every((i) => i.receivedQty >= i.quantity) ? { action: 'Invoice the rest of the PO' } : { waiting: 'Waiting for the PO to complete' }),
   });
   return steps;
 }
@@ -250,7 +282,7 @@ function stepsAfterOrder(pr: IPurchaseRequisition, at: Directory): RawStep[] {
     { group: FINANCE_STAGE, label: 'Invoice verification & 3-way match', kind: 'Process', done: false, owner: finance },
     { group: FINANCE_STAGE, label: 'Tax verification', kind: 'Approval', done: false, owner: finance },
     { group: FINANCE_STAGE, label: 'Payment release', kind: 'Process', done: false, owner: finance },
-    { label: 'Closed', kind: 'Task', done: false, owner: at(ROLES.VENDOR) },
+    { label: 'Closed', kind: 'Task', done: false, owner: at(ROLES.VENDOR), waiting: 'Waiting for the PO to complete' },
   );
   return steps;
 }
@@ -273,18 +305,32 @@ function requisitionSteps(pr: IPurchaseRequisition, at: Directory): RawStep[] {
       kind: 'Approval',
       done: approved || step.status === 'APPROVED',
       owner: at(step.role, pr.department),
+      action: 'Approve PR',
     });
   }
   return steps;
 }
 
-function sourcingSteps(rfq: RfqDocument | undefined, at: Directory, emergency: boolean): RawStep[] {
+/**
+ * What Procurement sees at the bidding step: while it is open with no bids it only waits for vendors; once
+ * bids are in it can close bidding and select one; after bidding has closed it selects a vendor, unless
+ * no vendor bid at all.
+ */
+function biddingWords(rfq: RfqDocument | undefined, bids: number): Pick<RawStep, 'action' | 'waiting'> {
+  if (!rfq || rfq.status !== RFQ_STATUS.PUBLISHED) return {};
+  if (new Date() >= rfq.closeAt) return bids > 0 ? { action: 'Select vendor' } : { waiting: NO_BIDS };
+  return bids > 0 ? { action: 'Close bid & select vendor' } : { waiting: 'Waiting for vendor bids' };
+}
+
+const NO_BIDS = 'No bids received';
+
+function sourcingSteps(rfq: RfqDocument | undefined, at: Directory, emergency: boolean, bids = 0): RawStep[] {
   if (emergency) return [{ label: 'Emergency PO', kind: 'Task', done: rfq?.status === RFQ_STATUS.AWARDED, owner: at(ROLES.PROCUREMENT) }];
   const procurement = at(ROLES.PROCUREMENT);
   const closed = !!rfq && ([RFQ_STATUS.CLOSED, RFQ_STATUS.AWARDED] as string[]).includes(rfq.status);
   const steps: RawStep[] = [
-    { label: 'RFQ published', kind: 'Task', done: !!rfq && rfq.status !== RFQ_STATUS.DRAFT, owner: procurement },
-    { label: 'Bidding', kind: 'Process', done: closed, owner: procurement, detail: rfq ? rfq.rfqNumber : undefined },
+    { label: 'RFQ published', kind: 'Task', done: !!rfq && rfq.status !== RFQ_STATUS.DRAFT, owner: procurement, action: rfq ? 'Publish RFQ' : 'Initiate RFQ' },
+    { label: 'Bidding', kind: 'Process', done: closed, owner: procurement, detail: rfq ? rfq.rfqNumber : undefined, ...biddingWords(rfq, bids) },
   ];
   const escalation = rfq?.budgetEscalation?.status === 'PENDING';
   steps.push({
@@ -292,6 +338,9 @@ function sourcingSteps(rfq: RfqDocument | undefined, at: Directory, emergency: b
     kind: escalation ? 'Approval' : 'Task',
     done: rfq?.status === RFQ_STATUS.AWARDED,
     owner: escalation ? at(ROLES.FINANCE) : procurement,
+    action: escalation ? 'Approve the budget escalation' : 'Select vendor',
+    // Bidding closed with nobody bidding: there is no vendor to select.
+    ...(!escalation && rfq?.status === RFQ_STATUS.CLOSED && bids === 0 && { waiting: NO_BIDS }),
     detail: escalation ? 'Budget escalation' : undefined,
   });
   return steps;
@@ -312,6 +361,7 @@ function orderSteps(po: PurchaseOrderDocument | undefined, at: Directory): RawSt
       kind: next ? 'Approval' : 'Task',
       done: generated,
       owner: next ? at(next.role, po?.department) : at(ROLES.PROCUREMENT),
+      action: next ? 'Approve PO' : 'Create PO',
       blocked: po?.status === PO_STATUS.REJECTED ? 'PO rejected at approval' : undefined,
       note: approver ? `PO approval pending: above Procurement authority, waiting for ${TEAM_WORD[approver] ?? approver}` : undefined,
     },
@@ -377,12 +427,22 @@ function poTrack(po: PurchaseOrderDocument, pr: PurchaseRequisitionDocument | un
   return { ...toTrack(po._id.toString(), po.poNumber, title, steps, user, 'Complete', createdAt(po), description), prId: pr?._id.toString(), rfqId: po.rfq.toString() };
 }
 
-function prTrack(pr: PurchaseRequisitionDocument, rfq: RfqDocument | undefined, at: Directory, user: AuthUser) {
-  const steps = [...requisitionSteps(pr, at), ...sourcingSteps(rfq, at, pr.isEmergency), ...orderSteps(undefined, at), ...stepsAfterOrder(pr, at)];
+function prTrack(pr: PurchaseRequisitionDocument, rfq: RfqDocument | undefined, at: Directory, user: AuthUser, bids = 0) {
+  const steps = [...requisitionSteps(pr, at), ...sourcingSteps(rfq, at, pr.isEmergency, bids), ...orderSteps(undefined, at), ...stepsAfterOrder(pr, at)];
   if (pr.status === PR_STATUS.CANCELLED) {
     steps[0] = { ...steps[0], done: false, blocked: `Cancelled: ${pr.cancellation?.reason ?? 'no reason given'}` };
   }
   return { ...toTrack(pr._id.toString(), pr.prNumber, pr.title, steps, user, 'Complete', createdAt(pr), pr.justification), prId: pr._id.toString(), rfqId: pr.rfq?.toString() };
+}
+
+/** Live (not withdrawn) bids on each RFQ. */
+async function liveBidCounts(rfqIds: Types.ObjectId[]): Promise<Map<string, number>> {
+  if (!rfqIds.length) return new Map();
+  const rows = await Bid.aggregate<{ _id: Types.ObjectId; n: number }>([
+    { $match: { rfq: { $in: rfqIds }, status: { $ne: BID_STATUS.WITHDRAWN } } },
+    { $group: { _id: '$rfq', n: { $sum: 1 } } },
+  ]);
+  return new Map(rows.map((r) => [r._id.toString(), r.n]));
 }
 
 /** The full track for one requisition, through its PO once there is one. The caller has already been allowed to see the PR. */
@@ -391,7 +451,8 @@ export async function trackForRequisition(pr: PurchaseRequisitionDocument, user:
   const po = pr.purchaseOrder ? await PurchaseOrder.findById(pr.purchaseOrder) : null;
   const rfq = await RFQ.findById(po?.rfq ?? pr.rfq);
   if (po) return poTrack(po, pr, rfq ?? undefined, (await loadPoRecords([po]))(po), at, user);
-  return prTrack(pr, rfq ?? undefined, at, user);
+  const bids = rfq ? (await liveBidCounts([rfq._id])).get(rfq._id.toString()) ?? 0 : 0;
+  return prTrack(pr, rfq ?? undefined, at, user, bids);
 }
 
 async function internalTracks(user: AuthUser): Promise<JourneyTrack[]> {
@@ -424,7 +485,8 @@ async function internalTracks(user: AuthUser): Promise<JourneyTrack[]> {
     poTrack(po, prById.get(po.requisitions[0]?.toString() ?? ''), rfqById.get(po.rfq.toString()), recordsFor(po), at, user),
   );
 
-  const prTracks = openPrs.map((pr) => prTrack(pr, pr.rfq ? rfqById.get(pr.rfq.toString()) : undefined, at, user));
+  const bidsOn = await liveBidCounts(openPrs.flatMap((pr) => (pr.rfq ? [pr.rfq] : [])));
+  const prTracks = openPrs.map((pr) => prTrack(pr, pr.rfq ? rfqById.get(pr.rfq.toString()) : undefined, at, user, pr.rfq ? bidsOn.get(pr.rfq.toString()) ?? 0 : 0));
 
   return mostRelevant([...poTracks, ...prTracks]);
 }
