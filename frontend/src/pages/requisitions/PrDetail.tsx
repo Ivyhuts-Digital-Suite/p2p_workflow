@@ -45,7 +45,7 @@ export function PrDetail({ pr }: { pr: Requisition }) {
           ))}
         </tbody>
       </table>
-      <PrChat prId={pr._id} prNumber={pr.prNumber} vendorCanRead={!!journey.data?.steps.some((s) => s.label === 'PO generated' && s.state === 'done')} />
+      <PrChat prId={pr._id} prNumber={pr.prNumber} vendorCanRead={!!journey.data?.steps.some((s) => s.label === 'Vendor selected' && s.state === 'done')} />
     </div>
   );
 }

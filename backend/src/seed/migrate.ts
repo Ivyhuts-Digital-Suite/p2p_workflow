@@ -24,6 +24,16 @@ export async function migrateDatabase(): Promise<void> {
     await collection.updateMany({ 'items.itemCode': { $exists: true } }, { $unset: { 'items.$[].itemCode': '' } });
   }
 
+  // The two-envelope tender and technical review were removed: clear their fields from older RFQs and bids.
+  await RFQ.collection.updateMany(
+    { $or: [{ technicalEvaluation: { $exists: true } }, { financialsOpenedAt: { $exists: true } }, { financialsOpenedBy: { $exists: true } }] },
+    { $unset: { technicalEvaluation: '', financialsOpenedAt: '', financialsOpenedBy: '' } },
+  );
+  await Bid.collection.updateMany(
+    { $or: [{ technicalStatus: { $exists: true } }, { technicalRemarks: { $exists: true } }, { technicalReviewedBy: { $exists: true } }, { technicalReviewedAt: { $exists: true } }] },
+    { $unset: { technicalStatus: '', technicalRemarks: '', technicalReviewedBy: '', technicalReviewedAt: '' } },
+  );
+
   // A seeded development database also gets the new demo account.
   if (!env.isProduction && (await User.exists({ email: 'admin@p2p.local' })) && !(await User.exists({ role: ROLES.AUDITOR }))) {
     await User.create({ name: 'Asha Auditor', email: 'auditor@p2p.local', password: DEMO_PASSWORD, role: ROLES.AUDITOR });

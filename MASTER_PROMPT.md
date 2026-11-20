@@ -451,3 +451,13 @@ Build the project for Vercel and list the environment variables it needs.
 - Do not change the backend invoice workflow, the 3-way match, the debit/credit note endpoints or any business rule.
 - Update the tests if needed, run the typechecks, and leave the changes uncommitted.
 
+## Phase 34: Final verification and audit (20 Nov)
+
+- Confirm git is clean and `main` matches `origin/main`, and that the Vercel production deployment of the latest commit succeeded and is live.
+- Audit every role end to end for leftover `itemCode`, broken links, console errors and stale labels.
+- Confirm these all work: the two-envelope removal, Close Bid & Select Vendor, vendor chat and its `awardedAt` filter, the "Your action" labels, "No bids received", and the `/invoices` actions (Book liability and Reject only).
+- Fix any remaining edge case, run the tests and typechecks, and push to `main`.
+- Fixes found in this audit:
+  - Older RFQs and bids still returned the removed two-envelope fields (`technicalEvaluation`, `financialsOpenedAt/By`, `technicalStatus`, `technicalRemarks`, `technicalReviewed*`). They are now cleared at startup.
+  - The PR detail view still keyed its "the vendor can read this conversation" notice on "PO generated". It now uses "Vendor selected", like the journey card.
+
