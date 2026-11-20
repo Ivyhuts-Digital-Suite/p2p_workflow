@@ -24,12 +24,12 @@ mongoose.connection.on('error', (err) => console.error('[db] connection error:',
 
 export const isDatabaseConnected = () => mongoose.connection.readyState === mongoose.ConnectionStates.connected;
 
-/** Makes one attempt to connect. Use connectWithRetry for a long-running server. */
-export async function connectDatabase(): Promise<void> {
+/** Makes one attempt to connect, waiting up to `timeoutMs` for a server. Use connectWithRetry for a long-running server. */
+export async function connectDatabase(timeoutMs = SERVER_SELECTION_TIMEOUT_MS): Promise<void> {
   mongoose.set('strictQuery', true);
   try {
     if (!env.mongoUri) throw Object.assign(new Error('MONGO_URI is not set in this environment'), { name: 'ConfigurationError' });
-    await mongoose.connect(env.mongoUri, { serverSelectionTimeoutMS: SERVER_SELECTION_TIMEOUT_MS });
+    await mongoose.connect(env.mongoUri, { serverSelectionTimeoutMS: timeoutMs });
     lastError = null;
   } catch (err) {
     const { name, message } = err as Error;

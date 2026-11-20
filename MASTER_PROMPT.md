@@ -460,4 +460,4 @@ Build the project for Vercel and list the environment variables it needs.
 - Fixes found in this audit:
   - Older RFQs and bids still returned the removed two-envelope fields (`technicalEvaluation`, `financialsOpenedAt/By`, `technicalStatus`, `technicalRemarks`, `technicalReviewed*`). They are now cleared at startup.
   - The PR detail view still keyed its "the vendor can read this conversation" notice on "PO generated". It now uses "Vendor selected", like the journey card.
-
+  - Production occasionally answered the first request after an idle spell with 503 "database temporarily unavailable". A new Vercel instance connects to Atlas on its first request and had only 5s to do it. Now an instance's first connection waits up to 10s and is tried twice, with concurrent requests sharing each attempt. After that, every attempt is one ordinary 5s try, so requests still fail fast during a real outage. Local development is unchanged.
