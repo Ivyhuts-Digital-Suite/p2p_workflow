@@ -1,5 +1,5 @@
 import { HydratedDocument, Schema, Types, model } from 'mongoose';
-import { BID_STATUS, BidStatus, TECHNICAL_STATUS, TechnicalStatus, enumValues } from '../constants/status';
+import { BID_STATUS, BidStatus, enumValues } from '../constants/status';
 import { calcOrderTotals, round2 } from '../utils/money';
 
 export interface IBidItem {
@@ -24,13 +24,8 @@ export interface IBid {
   deliveryDays: number;
   validityDays: number;
   notes?: string;
-  /** Technical / quality score (0-100) assigned by procurement */
+  /** Quality score (0-100) assigned by procurement */
   qualityScore?: number;
-  /** A disqualified bid is left out of the ranking and cannot be awarded */
-  technicalStatus: TechnicalStatus;
-  technicalRemarks?: string;
-  technicalReviewedBy?: Types.ObjectId;
-  technicalReviewedAt?: Date;
   /** Computed: (lowest total / this total) x 100 */
   priceScore?: number;
   /** Computed: position by lowest price, 1 = L1 */
@@ -63,10 +58,6 @@ const bidSchema = new Schema<IBid>(
     validityDays: { type: Number, default: 30, min: 1 },
     notes: String,
     qualityScore: { type: Number, min: 0, max: 100 },
-    technicalStatus: { type: String, enum: enumValues(TECHNICAL_STATUS), default: TECHNICAL_STATUS.PENDING },
-    technicalRemarks: String,
-    technicalReviewedBy: { type: Schema.Types.ObjectId, ref: 'User' },
-    technicalReviewedAt: Date,
     priceScore: Number,
     rank: Number,
     revision: { type: Number, default: 1 },

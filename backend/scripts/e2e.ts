@@ -577,40 +577,37 @@ async function main() {
   const refused = await call('POST', `/invoices/${qtyException.body._id}/exception-decision`, t.finance, { decision: 'REJECT', reason: 'No goods have arrived yet' });
   check('Finance can reject an exception', refused.status === 200 && refused.body.status === 'REJECTED', refused.body);
 
-  // ---- Technical evaluation -------------------------------------------------------------------
+  // ---- Direct selection: no envelopes, no technical gate --------------------------------------
   const techPr = await approvedPr('MRI contrast', 'BATCH', 10, 1000);
+  // A flag left over from the old two-envelope form is ignored: prices are never sealed.
   const techRfq = await publishedRfq('MRI contrast tender', techPr._id, { technicalEvaluation: true });
+  check('an RFQ has no two-envelope setting', !/technicalEvaluation|financialsOpened/.test(JSON.stringify(techRfq)), techRfq);
   const cheapBid = await placeBid(techRfq, 'vendor2', 800, 12);
   const dearBid = await placeBid(techRfq, 'vendor1', 900);
   check('a vendor quotes GST: actual + tax = total', cheapBid.body.totalAmount === 8000 && cheapBid.body.taxAmount === 960 && cheapBid.body.grandTotal === 8960, cheapBid.body);
   check('an invalid GST rate is refused on a bid', (await placeBid(techRfq, 'vendor1', 900, 7)).status === 422);
-  const sealedBidView = (await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.vendor1)).body;
-  check('a two-envelope bid shows the vendor no rank', cheapBid.body.rank === undefined && sealedBidView.bid.rank === undefined && sealedBidView.totalBids === undefined, sealedBidView);
-  check('a review must wait until bidding closes', (await call('PATCH', `/sourcing/bids/${cheapBid.body._id}/technical-review`, t.procurement, { result: 'QUALIFIED' })).status === 422);
-  await call('POST', `/sourcing/rfqs/${techRfq._id}/close`, t.procurement);
-  const sealedBids = (await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.procurement)).body as any[];
-  check('prices stay sealed from Procurement until financials open', sealedBids.every((b) => b.pricesSealed && b.totalAmount === undefined && b.rank === undefined && b.items[0].unitPrice === undefined && b.items[0].description === 'MRI contrast'), sealedBids);
-  const sealedDashboard = ((await call('GET', '/sourcing/dashboard', t.procurement)).body.rfqs as any[]).find((r) => r.rfqId === techRfq._id);
-  check('the dashboard stays sealed too', sealedDashboard.pricesSealed && sealedDashboard.lowestBid === null && sealedDashboard.rankings.length === 0 && !sealedDashboard.topVendor, sealedDashboard);
-  check('award is locked until financials open', /Action locked/.test((await call('POST', `/sourcing/rfqs/${techRfq._id}/award`, t.procurement, { bidId: dearBid.body._id })).body.message));
-  check('disqualifying needs a reason', (await call('PATCH', `/sourcing/bids/${cheapBid.body._id}/technical-review`, t.procurement, { result: 'DISQUALIFIED' })).status === 422);
-  check('a vendor cannot review bids', (await call('PATCH', `/sourcing/bids/${cheapBid.body._id}/technical-review`, t.vendor1, { result: 'DISQUALIFIED', remarks: 'Rival' })).status === 403);
-  await call('PATCH', `/sourcing/bids/${cheapBid.body._id}/technical-review`, t.procurement, { result: 'DISQUALIFIED', remarks: 'Fails the viscosity spec' });
-  // The dearer bid is left unreviewed: the technical review is optional and no longer gates the financials.
-  const techLoserBefore = (await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.vendor2)).body;
-  check('a vendor never sees the technical result', !/DISQUALIFIED|viscosity|technical/i.test(JSON.stringify(techLoserBefore)), techLoserBefore);
-  const opened = await call('POST', `/sourcing/rfqs/${techRfq._id}/open-financials`, t.procurement);
-  check('financials open without every bid being reviewed', opened.status === 200 && !!opened.body.financialsOpenedAt, opened.body);
-  check('financials open only once', (await call('POST', `/sourcing/rfqs/${techRfq._id}/open-financials`, t.procurement)).status === 409);
-  check('the review is final once they open', (await call('PATCH', `/sourcing/bids/${cheapBid.body._id}/technical-review`, t.procurement, { result: 'QUALIFIED' })).status === 422);
-  const sheet = (await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.procurement)).body as any[];
-  const dearRow = sheet.find((b) => b._id === dearBid.body._id);
-  const cheapRow = sheet.find((b) => b._id === cheapBid.body._id);
-  check('only the disqualified bid is left out of the ranking: the unreviewed dearer one is L1', dearRow.rank === 1 && cheapRow.rank === undefined && dearRow.items[0].unitPrice === 900 && dearRow.grandTotal === 10620, sheet);
-  check('a disqualified bid cannot be awarded', /disqualified/.test((await call('POST', `/sourcing/rfqs/${techRfq._id}/award`, t.procurement, { bidId: cheapBid.body._id, justification: 'It is simply cheaper' })).body.message));
-  const techAward = await call('POST', `/sourcing/rfqs/${techRfq._id}/award`, t.procurement, { bidId: dearBid.body._id });
-  check('the L1 is awarded with its quoted GST', techAward.status === 200 && techAward.body.po.items[0].taxRate === 18, techAward.body);
-  check('a losing vendor reads the same after a technical award', JSON.stringify((await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.vendor2)).body) === JSON.stringify(techLoserBefore));
+  const liveSheet = (await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.procurement)).body as any[];
+  const liveCheap = liveSheet.find((b) => b._id === cheapBid.body._id);
+  const liveDear = liveSheet.find((b) => b._id === dearBid.body._id);
+  check('Procurement sees every bid and its prices while bidding is still open', liveSheet.length === 2 && liveCheap.totalAmount === 8000 && liveCheap.grandTotal === 8960 && liveCheap.items[0].unitPrice === 800 && liveDear.items[0].unitPrice === 900 && liveCheap.items[0].description === 'MRI contrast', liveSheet);
+  check('bids are ranked at once, lowest price first', liveCheap.rank === 1 && liveDear.rank === 2, liveSheet.map((b) => [b.vendor.companyName, b.rank]));
+  check('no sealed or technical fields remain on a bid', !/pricesSealed|technicalStatus|technicalRemarks/.test(JSON.stringify(liveSheet)));
+  const liveDashboard = ((await call('GET', '/sourcing/dashboard', t.procurement)).body.rfqs as any[]).find((r) => r.rfqId === techRfq._id);
+  check('the dashboard shows the lowest quote and ranking while bidding is open', liveDashboard.lowestBid === 8000 && liveDashboard.rankings.length === 2 && liveDashboard.pricesSealed === undefined, liveDashboard);
+  check('the technical review endpoint is gone', (await call('PATCH', `/sourcing/bids/${cheapBid.body._id}/technical-review`, t.procurement, { result: 'QUALIFIED' })).status === 404);
+  check('the open-financials endpoint is gone', (await call('POST', `/sourcing/rfqs/${techRfq._id}/open-financials`, t.procurement)).status === 404);
+  const ownView = (await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.vendor1)).body;
+  check('a vendor still sees only their own bid, never a rival price', ownView.bid._id === dearBid.body._id && !JSON.stringify(ownView).includes('8000') && !JSON.stringify(ownView).includes('Infra Supplies'), ownView);
+  check('a vendor cannot read the comparison sheet of another vendor', !Array.isArray(ownView));
+  check('selecting a non-L1 vendor still needs a written justification', (await call('POST', `/sourcing/rfqs/${techRfq._id}/award`, t.procurement, { bidId: dearBid.body._id })).status === 422);
+  const techAward = await call('POST', `/sourcing/rfqs/${techRfq._id}/award`, t.procurement, { bidId: cheapBid.body._id });
+  check('Procurement selects a vendor straight from the bid list, while bidding is open', techAward.status === 200 && techAward.body.rfq.status === 'AWARDED' && !!techAward.body.po, techAward.body);
+  check('selecting during bidding closes it at once', new Date(techAward.body.rfq.closeAt).getTime() <= Date.now(), techAward.body.rfq.closeAt);
+  check('the selected bid keeps its quoted GST on the PO', techAward.body.po.items[0].taxRate === 12, techAward.body.po.items);
+  check('no more bids are taken once a vendor is selected', (await placeBid(techRfq, 'vendor1', 850)).status === 422);
+  const loserAfter = (await call('GET', `/sourcing/rfqs/${techRfq._id}/bids`, t.vendor1)).body;
+  const loserRfq = (await call('GET', `/sourcing/rfqs/${techRfq._id}`, t.vendor1)).body;
+  check('a losing vendor never learns of the award', loserRfq.status === 'CLOSED' && loserAfter.bid.status === 'SUBMITTED' && loserAfter.bid.rank === undefined && !/AWARDED|REJECTED|purchaseOrder|Infra/.test(JSON.stringify([loserAfter, loserRfq])), [loserAfter, loserRfq]);
 
   // ---- Budget re-check at award --------------------------------------------------------------
   const overPr = await approvedPr('Ward monitors', 'GOODS', 1, 10000);
@@ -1050,7 +1047,7 @@ async function main() {
 
   // A vendor's private conversation with Procurement on an RFQ, carried on into their PO.
   const vendor1Tracks = (await call('GET', '/journey', t.vendor1)).body.tracks as any[];
-  check('every vendor journey card carries its RFQ; only an issued PO card carries its PR', vendor1Tracks.length > 0 && vendor1Tracks.every((tr) => tr.rfqId === tr.id && (tr.prId === undefined || tr.steps.some((st: any) => st.label === 'PO received' && st.state === 'done'))), vendor1Tracks.map((tr) => [tr.id, tr.rfqId, tr.prId]));
+  check('every vendor journey card carries its RFQ; only a selected vendor\'s card carries its PR', vendor1Tracks.length > 0 && vendor1Tracks.every((tr) => tr.rfqId === tr.id && (tr.prId === undefined || tr.steps.some((st: any) => st.label === 'Selected by the buyer' && st.state === 'done'))), vendor1Tracks.map((tr) => [tr.id, tr.rfqId, tr.prId]));
   const internalCard = (await call('GET', `/requisitions/${pr._id}/journey`, t.procurement)).body;
   check('an internal card carries its PR and RFQ', internalCard.prId === pr._id && internalCard.rfqId === rfq._id, internalCard);
   const v1Msg = await call('POST', `/chat/rfqs/${rfq._id}/messages`, t.vendor1, { text: 'When should we deliver?' });
@@ -1072,37 +1069,76 @@ async function main() {
   check('a vendor cannot read another vendor\'s conversation by id', (await call('GET', `/chat/rfqs/${rfq._id}/vendors/${vendorIdOne}/messages`, t.vendor2)).status === 403);
   const inviteOnly = await publishedRfq('Invite-only chat', (await approvedPr('Invite-only chat', 'GOODS', 1, 100))._id, { invitedVendorIds: [vendor2Id] });
   check('a vendor cannot talk on an RFQ they were not invited to', (await call('POST', `/chat/rfqs/${inviteOnly._id}/messages`, t.vendor1, { text: 'Hi' })).status === 404 && (await call('POST', `/chat/rfqs/${inviteOnly._id}/messages`, t.vendor2, { text: 'A question' })).status === 201);
+  // From the moment they are invited, before any bid: the buyer's replies, history, badges and ticks.
+  check('an invited vendor\'s own message is not unread for them', !(await unread('vendor2')).rfqs[inviteOnly._id]);
+  check('the vendor\'s card for the invitation offers the conversation', ((await call('GET', '/journey', t.vendor2)).body.tracks as any[]).some((tr) => tr.rfqId === inviteOnly._id), inviteOnly._id);
+  await call('POST', `/chat/rfqs/${inviteOnly._id}/vendors/${vendor2Id}/messages`, t.procurement, { text: 'Please quote by Friday' });
+  await call('POST', `/chat/rfqs/${inviteOnly._id}/vendors/${vendor2Id}/messages`, t.procurement, { text: 'Delivery to the main store' });
+  check('the invited vendor has the buyer\'s 2 replies unread before bidding', (await unread('vendor2')).rfqs[inviteOnly._id] === 2, await unread('vendor2'));
+  check('Procurement\'s own replies are not unread for Procurement: only the vendor\'s question is', (await unread('procurement')).rfqs[inviteOnly._id] === 1, await unread('procurement'));
+  const invitedThread = (await call('GET', `/chat/rfqs/${inviteOnly._id}/messages`, t.vendor2)).body as any[];
+  check('the invited vendor reads the whole conversation, the buyer shown by team', invitedThread.length === 3 && invitedThread[0].text === 'A question' && invitedThread[2].text === 'Delivery to the main store' && invitedThread[1].senderName === 'Procurement', invitedThread);
+  check('reading clears the invited vendor\'s count', !(await unread('vendor2')).rfqs[inviteOnly._id]);
+  const buyerSees = (await call('GET', `/chat/rfqs/${inviteOnly._id}/vendors/${vendor2Id}/messages`, t.procurement)).body as any[];
+  check('the buyer sees blue ticks once the vendor has read the replies', buyerSees[2].readBy.some((r: any) => r.name === 'Meera Iyer'), buyerSees[2]);
   check('the auditor reads vendor conversations but cannot write', (await call('GET', `/chat/rfqs/${rfq._id}/vendors/${vendorIdOne}/messages`, t.auditor)).status === 200 && (await call('POST', `/chat/rfqs/${rfq._id}/vendors/${vendorIdOne}/messages`, t.auditor, { text: 'Hi' })).status === 403);
   check('the auditor never shows in the vendor\'s read receipts', ((await call('GET', `/chat/rfqs/${rfq._id}/messages`, t.vendor1)).body as any[]).every((m) => m.readBy.every((r: any) => r.name !== 'Audit')));
   check('vendor messages never appear in the internal PR conversation', !((await call('GET', `/requisitions/${pr._id}/messages`, t.procurement)).body as any[]).some((m) => m.text === 'When should we deliver?'));
 
-  // ---- Phase 26: the awarded vendor joins the PR/PO conversation once their PO is issued -------------
+  // ---- The selected vendor joins the PR/PO conversation from the moment they are selected ------------
   const gatePr = await approvedPr('Vendor chat gate', 'GOODS', 1, 200000);
   await call('POST', `/requisitions/${gatePr._id}/messages`, t.procurement, { text: 'Budget is tight on this one' });
   const gateRfq = await publishedRfq('Vendor chat gate RFQ', gatePr._id);
+  await call('POST', `/requisitions/${gatePr._id}/messages`, t['hod.it'], { text: 'Keep the vendor out of this one' });
   const gateBid = await placeBid(gateRfq, 'vendor1', 200000);
   await placeBid(gateRfq, 'vendor2', 210000);
   await call('POST', `/sourcing/rfqs/${gateRfq._id}/close`, t.procurement);
   const gatePo = (await call('POST', `/sourcing/rfqs/${gateRfq._id}/award`, t.procurement, { bidId: gateBid.body._id })).body.po;
   check('(the gate PO waits for the HOD)', gatePo.status === 'PENDING_APPROVAL', gatePo);
-  check('the winning vendor cannot join before the PO is issued', (await call('GET', `/requisitions/${gatePr._id}/messages`, t.vendor1)).status === 404 && !(await unread('vendor1')).prs[gatePr._id]);
-  await approveAndIssue(gatePo);
+  // Everything said on the PR before the vendor was selected stays hidden from them.
+  check('internal messages from before the selection never count as unread for the vendor', (await prUnread('vendor1', gatePr._id)) === 0, await unread('vendor1'));
+  const beforeWelcome = await call('GET', `/requisitions/${gatePr._id}/messages`, t.vendor1);
+  check('the selected vendor sees none of the messages from before their selection', beforeWelcome.status === 200 && beforeWelcome.body.length === 0, beforeWelcome.body);
+  const staffFull = (await call('GET', `/requisitions/${gatePr._id}/messages`, t.requester)).body as any[];
+  check('staff still see the full history, including what came before the selection', staffFull.some((m) => m.text === 'Budget is tight on this one') && staffFull.some((m) => m.text === 'Keep the vendor out of this one'), staffFull.map((m) => m.text));
+  check('the vendor opening the conversation leaves no read receipt on hidden messages', staffFull.every((m) => m.readBy.every((r: any) => r.name !== 'Vikram Shah')), staffFull);
+  for (const who of ['hod.it', 'procurement', 'finance', 'admin']) {
+    check(`${who} still sees the messages from before the selection`, ((await call('GET', `/requisitions/${gatePr._id}/messages`, t[who])).body as any[]).some((m) => m.text === 'Budget is tight on this one'));
+  }
+  await call('POST', `/requisitions/${gatePr._id}/messages`, t.procurement, { text: 'Welcome aboard' });
+  check('a message sent after the selection reaches the vendor as unread', (await prUnread('vendor1', gatePr._id)) === 1, await unread('vendor1'));
+  const pendingCard = ((await call('GET', '/journey', t.vendor1)).body.tracks as any[]).find((tr) => tr.rfqId === gateRfq._id);
+  check('the selected vendor\'s card carries the PR conversation while the PO waits', pendingCard?.prId === gatePr._id && pendingCard.steps.some((st: any) => st.label === 'PO received' && st.state !== 'done'), pendingCard);
   const vendorHistory = await call('GET', `/requisitions/${gatePr._id}/messages`, t.vendor1);
-  check('once issued, the vendor reads the full history, with staff shown by team', vendorHistory.status === 200 && vendorHistory.body[0].text === 'Budget is tight on this one' && vendorHistory.body[0].senderName === 'Procurement' && !/Priya/.test(JSON.stringify(vendorHistory.body)), vendorHistory.body);
+  check('the vendor reads only what was said from their selection on, with staff shown by team', vendorHistory.status === 200 && vendorHistory.body.length === 1 && vendorHistory.body[0].text === 'Welcome aboard' && vendorHistory.body[0].senderName === 'Procurement' && !/Priya|Budget is tight|Keep the vendor out/.test(JSON.stringify(vendorHistory.body)), vendorHistory.body);
+  check('reading clears that unread for the vendor', (await prUnread('vendor1', gatePr._id)) === 0);
+  check('…and can post there before the PO is issued', (await call('POST', `/requisitions/${gatePr._id}/messages`, t.vendor1, { text: 'Stock is reserved for you' })).status === 201);
+  await approveAndIssue(gatePo);
+  check('the vendor keeps the conversation once the PO is issued', (await call('GET', `/requisitions/${gatePr._id}/messages`, t.vendor1)).status === 200);
   check('a losing vendor never joins', (await call('GET', `/requisitions/${gatePr._id}/messages`, t.vendor2)).status === 404 && (await call('POST', `/requisitions/${gatePr._id}/messages`, t.vendor2, { text: 'Me too' })).status === 404);
   const vendorPost = await call('POST', `/requisitions/${gatePr._id}/messages`, t.vendor1, { text: 'Dispatching on Monday' });
   check('the vendor posts in the PR/PO conversation', vendorPost.status === 201 && vendorPost.body.senderRole === 'VENDOR', vendorPost.body);
-  check('staff see the vendor message unread', (await prUnread('procurement', gatePr._id)) === 1 && (await prUnread('hod.it', gatePr._id)) >= 1 && (await prUnread('store', gatePr._id)) >= 1);
+  check('staff see the vendor messages unread', (await prUnread('procurement', gatePr._id)) === 2 && (await prUnread('hod.it', gatePr._id)) >= 1 && (await prUnread('store', gatePr._id)) >= 1);
   const staffView = (await call('GET', `/requisitions/${gatePr._id}/messages`, t.procurement)).body as any[];
-  check('staff see the vendor by name', staffView[1].senderName === 'Vikram Shah', staffView[1]);
+  check('staff see the vendor by name', staffView.filter((m) => m.senderRole === 'VENDOR').every((m) => m.senderName === 'Vikram Shah') && staffView.some((m) => m.senderRole === 'VENDOR'), staffView);
   await call('POST', `/requisitions/${gatePr._id}/messages`, t.procurement, { text: 'Monday works' });
   check('the vendor has the internal reply unread on their card', (await prUnread('vendor1', gatePr._id)) === 1, await unread('vendor1'));
   const vendorThread = (await call('GET', `/requisitions/${gatePr._id}/messages`, t.vendor1)).body as any[];
-  check('the vendor sees the reply, and blue ticks once staff read their message', vendorThread[2].text === 'Monday works' && vendorThread[1].readBy.some((r: any) => r.name === 'Procurement') && vendorThread[1].readBy.every((r: any) => !/Priya/.test(r.name)), vendorThread);
+  const lastOwn = vendorThread.filter((m) => m.senderRole === 'VENDOR').pop();
+  check('the vendor sees the reply, and blue ticks once staff read their message', vendorThread[vendorThread.length - 1].text === 'Monday works' && lastOwn.readBy.some((r: any) => r.name === 'Procurement') && lastOwn.readBy.every((r: any) => !/Priya/.test(r.name)), vendorThread);
   check('reading clears the vendor\'s count', (await prUnread('vendor1', gatePr._id)) === 0);
   const vendorCard = ((await call('GET', '/journey', t.vendor1)).body.tracks as any[]).find((tr) => tr.rfqId === gateRfq._id);
   check('the vendor\'s PO card carries the PR for its order conversation', vendorCard?.prId === gatePr._id && vendorCard.reference === gatePo.poNumber, vendorCard);
   check('a vendor still cannot open the PR itself', (await call('GET', `/requisitions/${gatePr._id}`, t.vendor1)).status === 403);
+
+  // A cancelled PO sends the PR back to sourcing, and the vendor leaves its conversation.
+  const dropPr = await approvedPr('Vendor chat drop', 'GOODS', 1, 200000);
+  const dropRfq = await publishedRfq('Vendor chat drop RFQ', dropPr._id);
+  const dropBid = await placeBid(dropRfq, 'vendor1', 200000);
+  const dropPo = (await call('POST', `/sourcing/rfqs/${dropRfq._id}/award`, t.procurement, { bidId: dropBid.body._id })).body.po;
+  check('(the selected vendor is in that conversation)', (await call('GET', `/requisitions/${dropPr._id}/messages`, t.vendor1)).status === 200);
+  await call('POST', `/purchase-orders/${dropPo._id}/cancel`, t.procurement, { reason: 'Requirement changed' });
+  check('once the PO is cancelled the vendor leaves the conversation', (await call('GET', `/requisitions/${dropPr._id}/messages`, t.vendor1)).status === 404 && !(await unread('vendor1')).prs[dropPr._id]);
 
   // Phase 26: a sender's own messages never count as unread for them, in any conversation.
   for (const who of ['requester', 'hod.it', 'procurement', 'store', 'finance', 'admin', 'vendor1']) {
@@ -1112,6 +1148,10 @@ async function main() {
     check(`${who}'s own message never counts as unread for them`, (await prUnread(who, gatePr._id)) === 0, [before, await unread(who)]);
   }
   check('everyone else has each of those messages unread once', (await prUnread('auditor', gatePr._id)) === ((await call('GET', `/requisitions/${gatePr._id}/messages`, t.procurement)).body as any[]).length, await unread('auditor'));
+  check('auditor still sees the messages from before the selection', ((await call('GET', `/requisitions/${gatePr._id}/messages`, t.auditor)).body as any[]).some((m) => m.text === 'Budget is tight on this one'));
+  const vendorFinal = (await call('GET', `/requisitions/${gatePr._id}/messages`, t.vendor1)).body as any[];
+  const staffFinal = (await call('GET', `/requisitions/${gatePr._id}/messages`, t.procurement)).body as any[];
+  check('at the end the vendor still sees only messages from their selection on', vendorFinal.length === staffFinal.length - 2 && !/Budget is tight|Keep the vendor out/.test(JSON.stringify(vendorFinal)), [vendorFinal.length, staffFinal.length]);
   const ownVendorNote = await call('POST', `/chat/rfqs/${gateRfq._id}/messages`, t.vendor1, { text: 'Private note to the buyer' });
   check('own messages in a private vendor conversation never count either', ownVendorNote.status === 201 && !(await unread('vendor1')).rfqs[gateRfq._id] && (await unread('procurement')).rfqs[gateRfq._id] === 1);
   await call('POST', `/chat/rfqs/${gateRfq._id}/vendors/${vendorIdOne}/messages`, t.procurement, { text: 'Noted' });
@@ -1154,8 +1194,8 @@ async function main() {
   const dashTrack = (await call('GET', '/journey', t['hod.it'])).body.tracks.find((tr: any) => tr.reference === chatPr.prNumber);
   check('the dashboard track carries its PR too', dashTrack?.prId === chatPr._id, dashTrack);
   check('a PO track carries the PR behind it', (await call('GET', `/requisitions/${pr._id}/journey`, t.requester)).body.prId === pr._id);
-  check('a vendor track carries a PR only once their PO is issued', ((await call('GET', '/journey', t.vendor1)).body.tracks as any[]).every((tr) => tr.prId === undefined || tr.steps.some((st: any) => st.label === 'PO received' && st.state === 'done')));
-  check('a losing vendor track never carries a PR', ((await call('GET', '/journey', t.vendor2)).body.tracks as any[]).every((tr) => tr.prId === undefined || tr.steps.some((st: any) => st.label === 'PO received' && st.state === 'done')));
+  check('a vendor track carries a PR only once they are selected', ((await call('GET', '/journey', t.vendor1)).body.tracks as any[]).every((tr) => tr.prId === undefined || tr.steps.some((st: any) => st.label === 'Selected by the buyer' && st.state === 'done')));
+  check('a losing vendor track never carries a PR', ((await call('GET', '/journey', t.vendor2)).body.tracks as any[]).every((tr) => tr.prId === undefined || tr.steps.some((st: any) => st.label === 'Selected by the buyer' && st.state === 'done')));
   const prLabels = prJourney.steps.map((st: any) => st.label);
   check('a new PR shows its whole path, to payment', ['HOD approval', 'RFQ published', 'PO generated', 'Goods receipt & inspection', 'Invoice', 'Tax verification', 'Payment release', 'Closed'].every((l) => prLabels.includes(l)), prLabels);
   check('the path has no separate PO approval, issue or acknowledgement stages', !prLabels.some((l: string) => ['PO approval', 'PO issued', 'Vendor acknowledgement'].includes(l)), prLabels);

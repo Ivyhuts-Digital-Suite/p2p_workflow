@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { GST_SLABS, LICENCE_TYPES, TECHNICAL_STATUS } from '../../constants/status';
+import { GST_SLABS, LICENCE_TYPES } from '../../constants/status';
 
 const objectId = z.string().regex(/^[a-f\d]{24}$/i, 'Invalid id');
 const gstRate = z.number().refine((r) => GST_SLABS.includes(r), `GST rate must be one of ${GST_SLABS.join(', ')}`);
@@ -13,8 +13,6 @@ export const createRfqSchema = z
     invitedVendorIds: z.array(objectId).default([]),
     openAt: z.coerce.date().optional(),
     closeAt: z.coerce.date(),
-    /** Two-envelope tender: prices stay sealed until the technical review is finished */
-    technicalEvaluation: z.boolean().default(false),
     requiredLicences: z.array(z.enum(LICENCE_TYPES)).default([]),
   })
   .refine((v) => v.closeAt > new Date(), { message: 'closeAt must be in the future', path: ['closeAt'] });
@@ -37,18 +35,6 @@ export const awardSchema = z.object({
   /** Written reason for accepting a quote above the requisition estimate */
   overrunReason: z.string().trim().min(10, 'The reason must be at least 10 characters').optional(),
 });
-
-export const technicalReviewSchema = z
-  .object({
-    result: z.enum([TECHNICAL_STATUS.QUALIFIED, TECHNICAL_STATUS.DISQUALIFIED]),
-    remarks: z.string().trim().optional(),
-    technicalScore: z.number().min(0).max(100).optional(),
-  })
-  .refine((r) => r.result === TECHNICAL_STATUS.QUALIFIED || (r.remarks?.length ?? 0) >= 3, {
-    message: 'Give the reason for disqualifying this bid',
-    path: ['remarks'],
-  });
-
 export const budgetEscalationSchema = z.object({ bidId: objectId, reason: z.string().trim().min(10, 'The reason must be at least 10 characters') });
 
 export const escalationDecisionSchema = z

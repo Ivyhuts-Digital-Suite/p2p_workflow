@@ -12,7 +12,7 @@ import { AuthUser } from '../../types/auth';
 import { ApiError } from '../../utils/ApiError';
 import { asyncHandler } from '../../utils/asyncHandler';
 import { oid } from '../../utils/objectId';
-import { chatScope } from '../requisition/requisition.controller';
+import { chatScope, vendorChatWindows } from '../requisition/requisition.controller';
 
 const countBy = async (match: FilterQuery<IPrMessage>, field: 'pr' | 'rfq') => {
   const rows = await PrMessage.aggregate<{ _id: Types.ObjectId; unread: number }>([{ $match: match }, { $group: { _id: `$${field}`, unread: { $sum: 1 } } }]);
@@ -27,9 +27,16 @@ export const unreadCounts = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const unread = unreadBy(user);
 
-  const scope = await chatScope(user);
-  const prIds = scope ? await PurchaseRequisition.find(scope).distinct('_id') : [];
-  const prs = prIds.length ? await countBy({ ...unread, pr: { $in: prIds } }, 'pr') : {};
+  let prs: Record<string, number> = {};
+  if (user.role === ROLES.VENDOR) {
+    // A vendor counts only messages from the moment they were selected on each PR.
+    const windows = await vendorChatWindows(user);
+    if (windows.length) prs = await countBy({ ...unread, $or: windows.map((w) => ({ pr: w.pr, createdAt: { $gte: w.since } })) }, 'pr');
+  } else {
+    const scope = await chatScope(user);
+    const prIds = scope ? await PurchaseRequisition.find(scope).distinct('_id') : [];
+    if (prIds.length) prs = await countBy({ ...unread, pr: { $in: prIds } }, 'pr');
+  }
 
   const vendorThreads: FilterQuery<IPrMessage> | null =
     user.role === ROLES.VENDOR ? { vendor: oid(user.vendor ?? '') } : VENDOR_THREAD_ROLES.includes(user.role) ? { vendor: { $exists: true } } : null;

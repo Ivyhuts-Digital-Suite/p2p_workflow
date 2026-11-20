@@ -1,8 +1,8 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { errorDetails, errorMessage } from '../../api/client';
 import { poApi, sourcingApi } from '../../api/services';
-import { askReason, Modal, toast } from '../../components/overlays';
+import { Modal, toast } from '../../components/overlays';
 import { LockBanner, PriceBreakdown } from '../../components/Workflow';
 import { Empty, ErrorBanner, StatusBadge } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
@@ -27,6 +27,7 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
   const [busy, setBusy] = useState(false);
 
   const isL1 = bid.rank === 1;
+  const biddingOpen = rfq.status === 'PUBLISHED' && new Date(rfq.closeAt) > new Date();
   const taxAmount = rate === 'quoted' ? bid.taxAmount ?? 0 : Math.round(bid.totalAmount * rate) / 100;
   const total = bid.totalAmount + taxAmount;
   const exceeded = budget?.code === 'BUDGET_EXCEEDED';
@@ -129,6 +130,11 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
             <textarea rows={2} value={escalationReason} onChange={(e) => setEscalationReason(e.target.value)} minLength={10} />
           </label>
         ))}
+        {biddingOpen && (
+          <div className="alert alert-warning">
+            <span>Bidding is open until {formatDateTime(rfq.closeAt)}. Selecting this vendor now closes it for every vendor.</span>
+          </div>
+        )}
         <p className="muted small">Selecting this vendor generates the purchase order. Within your DoA authority it is approved and issued at once; above it, it goes to the HOD or Finance.</p>
         <div className="form-footer">
           <div className="spacer" />
@@ -151,13 +157,13 @@ function AwardDialog({ rfq, bid, onClose, onDone }: { rfq: Rfq; bid: Bid; onClos
 }
 
 /**
- * The comparison sheet for an RFQ. On a two-envelope tender Procurement reviews each bid first, with
- * prices sealed, then opens the financials: only qualified bids are ranked and can be selected.
+ * The comparison sheet for an RFQ: every bid and its prices from the moment it is submitted, ranked by
+ * lowest price, with "Select vendor" on each live bid. Vendors never see this sheet or each other's bids.
  */
 export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unknown }) {
   const { hasRole } = useAuth();
   const canManage = hasRole('PROCUREMENT');
-  const { data: bids, error, reload } = useApi(() => sourcingApi.bids(rfq._id), [rfq._id, rfq.status, rfq.financialsOpenedAt]);
+  const { data: bids, error, reload } = useApi(() => sourcingApi.bids(rfq._id), [rfq._id, rfq.status]);
   const [awarding, setAwarding] = useState<Bid | null>(null);
   const refresh = async () => {
     await reload();
@@ -165,18 +171,16 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
   };
   const action = useAction(refresh);
 
-  const biddingEnded = rfq.status === 'CLOSED' || (rfq.status === 'PUBLISHED' && new Date(rfq.closeAt) <= new Date());
-  const sealed = !!rfq.technicalEvaluation && !rfq.financialsOpenedAt;
-  const canAward = canManage && biddingEnded && !sealed;
-  const canReview = canManage && biddingEnded && !rfq.financialsOpenedAt;
-  const live = bids?.filter((b) => b.status === 'SUBMITTED') ?? [];
-  const unreviewed = live.filter((b) => b.technicalStatus === 'PENDING').length;
+  const biddingLive = rfq.status === 'PUBLISHED' && new Date(rfq.closeAt) > new Date();
+  // Any live bid can be selected, during bidding or after it closes.
+  const canAward = canManage && (rfq.status === 'PUBLISHED' || rfq.status === 'CLOSED');
 
-  const review = async (bid: Bid, result: 'QUALIFIED' | 'DISQUALIFIED') => {
-    const remarks = result === 'DISQUALIFIED' ? await askReason(`Disqualify ${bid.vendor.companyName}`, 3, 'Disqualify') : undefined;
-    if (remarks === null) return;
-    void action.run(() => sourcingApi.technicalReview(bid._id, { result, remarks }), `${bid.vendor.companyName} ${result === 'QUALIFIED' ? 'qualified' : 'disqualified'}`);
-  };
+  // New bids appear without a reload while bidding is live.
+  useEffect(() => {
+    if (!biddingLive) return;
+    const timer = window.setInterval(() => void reload(), 15_000);
+    return () => window.clearInterval(timer);
+  }, [biddingLive, reload]);
 
   return (
     <div className="panel">
@@ -191,24 +195,9 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
       )}
       {rfq.budgetEscalation?.status === 'PENDING' && <LockBanner message="Action locked: a budget escalation is pending at Finance. Please wait until completion." />}
       {rfq.budgetEscalation?.status === 'REJECTED' && <div className="alert alert-error">Finance refused the budget escalation: {rfq.budgetEscalation.remarks}</div>}
-      {sealed && (
-        <div className="alert alert-info">
-          <span>
-            Two-envelope tender: prices stay sealed until you open the financials. The technical review is optional: disqualify a bid that fails the specification, and it is left out of the ranking.
-            {biddingEnded && unreviewed > 0 ? ` ${unreviewed} not reviewed.` : ''}
-          </span>
-          {canManage && biddingEnded && (
-            <button className="btn btn-sm btn-primary" disabled={action.busy} onClick={() => void action.run(() => sourcingApi.openFinancials(rfq._id), 'Financials opened. Bids that were not disqualified are now ranked.')}>
-              Open financials
-            </button>
-          )}
-        </div>
-      )}
-      {!sealed && (
-        <p className="muted small">
-          Bids are ranked by lowest pre-tax price; disqualified bids are left out. Choosing a vendor other than L1 needs a written justification, kept in the audit trail.
-        </p>
-      )}
+      <p className="muted small">
+        Bids are ranked by lowest pre-tax price{biddingLive ? ' and refresh while bidding is open' : ''}. Choosing a vendor other than L1 needs a written justification, kept in the audit trail.
+      </p>
       {!bids?.length ? (
         <Empty>No bids yet.</Empty>
       ) : (
@@ -221,7 +210,6 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
               <th className="num">Actual + Tax = Total</th>
               <th>Delivery</th>
               <th className="num">% of L1 price</th>
-              <th>Technical</th>
               <th>Submitted</th>
               <th>Status</th>
               <th />
@@ -242,33 +230,19 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
                     {bid.items.map((line) => (
                       <li key={line.rfqItem} title={line.description}>
                         <strong>{lineName(line)}</strong> × {line.quantity} {line.uom}
-                        {!bid.pricesSealed && (
-                          <span className="muted">
-                            {' '}
-                            @ {formatMoney(line.unitPrice)} + {line.taxRate}%
-                          </span>
-                        )}
+                        <span className="muted">
+                          {' '}
+                          @ {formatMoney(line.unitPrice)} + {line.taxRate}%
+                        </span>
                       </li>
                     ))}
                   </ul>
                 </td>
-                <td className="num">{bid.pricesSealed ? <span className="muted">Sealed</span> : <PriceBreakdown compact actual={bid.totalAmount} tax={bid.taxAmount} total={bid.grandTotal} />}</td>
+                <td className="num">
+                  <PriceBreakdown compact actual={bid.totalAmount} tax={bid.taxAmount} total={bid.grandTotal} />
+                </td>
                 <td>{bid.deliveryDays} days</td>
                 <td className="num">{bid.priceScore ?? '-'}</td>
-                <td>
-                  <StatusBadge status={bid.technicalStatus ?? 'PENDING'} />
-                  {bid.technicalRemarks && <div className="muted small">{bid.technicalRemarks}</div>}
-                  {canReview && bid.status === 'SUBMITTED' && (
-                    <div className="row-actions">
-                      <button className="btn btn-sm" disabled={action.busy} onClick={() => void review(bid, 'QUALIFIED')}>
-                        Qualify
-                      </button>
-                      <button className="btn btn-sm btn-danger" disabled={action.busy} onClick={() => void review(bid, 'DISQUALIFIED')}>
-                        Disqualify
-                      </button>
-                    </div>
-                  )}
-                </td>
                 <td>
                   {formatDateTime(bid.submittedAt)}
                   {bid.revision > 1 && <span className="muted small"> (rev {bid.revision})</span>}
@@ -277,7 +251,7 @@ export function RfqBidsPanel({ rfq, onChange }: { rfq: Rfq; onChange: () => unkn
                   <StatusBadge status={bid.status} />
                 </td>
                 <td className="row-actions">
-                  {canAward && bid.status === 'SUBMITTED' && bid.technicalStatus !== 'DISQUALIFIED' && (
+                  {canAward && bid.status === 'SUBMITTED' && (
                     <button className="btn btn-sm btn-primary" disabled={action.busy} onClick={() => setAwarding(bid)}>
                       Select vendor
                     </button>

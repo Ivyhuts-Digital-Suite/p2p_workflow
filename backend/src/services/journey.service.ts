@@ -91,7 +91,6 @@ const STEP_WORDS: Record<string, [string, string]> = {
   'HOD approval': ['HOD approval completed', 'HOD approval pending: waiting for HOD review'],
   'RFQ published': ['RFQ published to vendors', 'Waiting for Procurement to initiate the RFQ'],
   Bidding: ['Bidding closed', 'Vendors are bidding'],
-  'Technical evaluation': ['Technical evaluation completed', 'Waiting for the technical evaluation'],
   'Vendor selected': ['Vendor selected', 'Waiting for Procurement to select a vendor'],
   'Emergency PO': ['Emergency PO raised', 'Waiting for Procurement to buy directly'],
   'PO generated': ['PO generated and issued to the vendor', 'Waiting for Procurement to generate the PO'],
@@ -287,9 +286,6 @@ function sourcingSteps(rfq: RfqDocument | undefined, at: Directory, emergency: b
     { label: 'RFQ published', kind: 'Task', done: !!rfq && rfq.status !== RFQ_STATUS.DRAFT, owner: procurement },
     { label: 'Bidding', kind: 'Process', done: closed, owner: procurement, detail: rfq ? rfq.rfqNumber : undefined },
   ];
-  if (rfq?.technicalEvaluation) {
-    steps.push({ label: 'Technical evaluation', kind: 'Task', done: !!rfq.financialsOpenedAt, owner: procurement });
-  }
   const escalation = rfq?.budgetEscalation?.status === 'PENDING';
   steps.push({
     label: 'Vendor selected',
@@ -452,6 +448,9 @@ async function vendorTracks(user: AuthUser): Promise<JourneyTrack[]> {
   const pos = await PurchaseOrder.find({ rfq: { $in: wonRfqs.map((r) => r._id) }, vendor: user.vendor, status: { $ne: PO_STATUS.CANCELLED } });
   const poByRfq = new Map(pos.map((po) => [po.rfq.toString(), po]));
   const recordsFor = await loadPoRecords(pos);
+  // The PR behind each RFQ this vendor won. A cancelled PO removes this link, so the vendor leaves its conversation.
+  const wonPrs = await PurchaseRequisition.find({ rfq: { $in: wonRfqs.map((r) => r._id) } }).select('_id rfq');
+  const prByRfq = new Map(wonPrs.map((pr) => [pr.rfq!.toString(), pr._id.toString()]));
 
   const tracks: JourneyTrack[] = [];
   for (const rfq of rfqs) {
@@ -481,8 +480,8 @@ async function vendorTracks(user: AuthUser): Promise<JourneyTrack[]> {
     if (po && issued) {
       steps.push(...deliveryAndPaymentSteps(po, recordsFor(po), at));
     }
-    // Once their PO is issued, the vendor joins the order's conversation (the PR behind the PO).
-    const orderPr = issued && po && po.status !== PO_STATUS.CANCELLED ? po.requisitions[0]?.toString() : undefined;
+    // From the moment they are selected, the vendor joins the order's conversation (the PR behind the RFQ and PO).
+    const orderPr = prByRfq.get(key) ?? (issued && po && po.status !== PO_STATUS.CANCELLED ? po.requisitions[0]?.toString() : undefined);
     tracks.push({ ...toTrack(key, issued && po ? po.poNumber : rfq.rfqNumber, rfq.title, steps, user, 'Complete', createdAt(rfq), rfq.description), rfqId: key, prId: orderPr });
   }
   return mostRelevant(tracks);

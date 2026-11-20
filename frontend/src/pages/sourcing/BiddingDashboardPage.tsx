@@ -50,7 +50,7 @@ export function BiddingDashboardPage() {
                     <dt>Bids received</dt>
                     <dd>{row.totalBids}</dd>
                     <dt>Lowest quote</dt>
-                    <dd>{row.pricesSealed ? 'Sealed' : formatMoney(row.lowestBid)}</dd>
+                    <dd>{formatMoney(row.lowestBid)}</dd>
                     <dt>{row.isLive ? 'Time remaining' : 'Closed at'}</dt>
                     <dd>{row.isLive ? formatDuration(row.timeRemainingMs) : formatDateTime(row.closeAt)}</dd>
                   </dl>
@@ -60,7 +60,7 @@ export function BiddingDashboardPage() {
                         Awarded to <strong>{row.topVendor.companyName}</strong> (L{row.topVendor.rank})
                       </p>
                     )}
-                    <div className="muted small">{row.pricesSealed ? 'Prices stay sealed until the technical review is finished' : 'Live ranking (lowest price first)'}</div>
+                    <div className="muted small">Live ranking (lowest price first)</div>
                     {row.rankings.length ? (
                       <ol className="rankings">
                         {row.rankings.map((r) => (

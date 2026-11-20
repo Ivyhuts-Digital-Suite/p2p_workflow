@@ -1,12 +1,12 @@
 import { FilterQuery, Types } from 'mongoose';
 import { ROLES } from '../../constants/roles';
-import { BID_STATUS, ESCALATION_STATUS, PR_STATUS, RATIFICATION_STATUS, RFQ_STATUS, TECHNICAL_STATUS, VENDOR_STATUS } from '../../constants/status';
+import { BID_STATUS, ESCALATION_STATUS, PR_STATUS, RATIFICATION_STATUS, RFQ_STATUS, VENDOR_STATUS } from '../../constants/status';
 import { env } from '../../config/env';
 import { currentUser } from '../../middleware/auth';
 import { Bid, BidDocument } from '../../models/Bid';
 import { Department } from '../../models/Department';
 import { PurchaseRequisition } from '../../models/PurchaseRequisition';
-import { IRfq, RFQ, RfqDocument } from '../../models/RFQ';
+import { RFQ, RfqDocument } from '../../models/RFQ';
 import { Vendor, VendorDocument } from '../../models/Vendor';
 import { evaluateRfqBids } from '../../services/bidEvaluation.service';
 import { adjustCommitment, requisitionEstimate } from '../../services/budget.service';
@@ -22,13 +22,8 @@ import { nextDocNumber } from '../../utils/sequence';
 
 const isVendor = (user: AuthUser) => user.role === ROLES.VENDOR;
 
-/** priceScore is left out because it reveals the lowest rival quote; the technical review is internal. */
+/** priceScore is left out because it reveals the lowest rival quote. */
 const VENDOR_BID_FIELDS = 'rfq vendor items totalAmount taxAmount grandTotal deliveryDays validityDays notes rank revision status submittedAt';
-/** On a two-envelope tender a vendor sees no ranking at all, because no one has seen the prices yet. */
-const VENDOR_SEALED_BID_FIELDS = VENDOR_BID_FIELDS.replace(' rank', '');
-
-/** Two-envelope tender: Procurement sees who bid, but no price, until the financials are opened. */
-const pricesSealed = (rfq: Pick<IRfq, 'technicalEvaluation' | 'financialsOpenedAt'>) => rfq.technicalEvaluation && !rfq.financialsOpenedAt;
 
 /** A closed bid shows no rank, and a losing bid stays as it was submitted rather than turning REJECTED at the award. */
 function closedBidView(bid: BidDocument) {
@@ -235,19 +230,15 @@ export const awardRfq = asyncHandler(async (req, res) => {
   if (rfq.status === RFQ_STATUS.PUBLISHED && new Date() >= rfq.closeAt) {
     rfq.status = RFQ_STATUS.CLOSED;
   }
-  if (rfq.status !== RFQ_STATUS.CLOSED) {
-    throw ApiError.unprocessable('RFQ must be closed before award');
+  // Procurement can select a vendor as soon as bids arrive. Selecting while bidding is open closes it for every vendor.
+  if (rfq.status !== RFQ_STATUS.CLOSED && rfq.status !== RFQ_STATUS.PUBLISHED) {
+    throw ApiError.unprocessable(`RFQ is ${rfq.status}`);
   }
-  if (pricesSealed(rfq)) {
-    throw ApiError.unprocessable('Action locked: complete the technical review and open the financials before selecting a vendor');
-  }
+  const closesBiddingNow = isBiddingOpen(rfq);
 
   await evaluateRfqBids(rfq._id);
   const bid = await Bid.findOne({ _id: req.body.bidId, rfq: rfq._id, status: BID_STATUS.SUBMITTED });
   if (!bid) throw ApiError.notFound('Bid on this RFQ');
-  if (bid.technicalStatus === TECHNICAL_STATUS.DISQUALIFIED) {
-    throw ApiError.unprocessable(`This bid was disqualified at technical review: ${bid.technicalRemarks ?? 'no remarks'}`);
-  }
   if (bid.rank !== 1 && !req.body.justification) {
     throw ApiError.unprocessable('A written justification is required when awarding to a vendor other than L1');
   }
@@ -278,6 +269,7 @@ export const awardRfq = asyncHandler(async (req, res) => {
         awardJustification: req.body.justification,
         awardedBy: oid(user.id),
         awardedAt: new Date(),
+        ...(closesBiddingNow && { closeAt: new Date() }),
         budgetVariance: budget.overrun,
         overrunReason: budget.overrun > 0 ? req.body.overrunReason : undefined,
       },
@@ -364,54 +356,6 @@ export const decideBudgetEscalation = asyncHandler(async (req, res) => {
   res.json(claimed);
 });
 
-// ---- Technical evaluation -----------------------------------------------------------
-
-/** Procurement records whether a bid meets the specification, once bidding has ended. */
-export const technicalReview = asyncHandler(async (req, res) => {
-  const user = currentUser(req);
-  const bid = await Bid.findById(req.params.bidId);
-  if (!bid) throw ApiError.notFound('Bid');
-  const rfq = await loadRfq(bid.rfq.toString(), user);
-  if (bid.status !== BID_STATUS.SUBMITTED) throw ApiError.unprocessable(`Bid is ${bid.status}`);
-  if (isBiddingOpen(rfq)) throw ApiError.unprocessable('Bids can be reviewed once bidding has closed');
-  if (rfq.status === RFQ_STATUS.AWARDED || rfq.status === RFQ_STATUS.CANCELLED) throw ApiError.unprocessable(`RFQ is ${rfq.status}`);
-  if (rfq.financialsOpenedAt) throw ApiError.unprocessable('The financials are open, so the technical review is final');
-
-  bid.technicalStatus = req.body.result;
-  bid.technicalRemarks = req.body.remarks;
-  if (req.body.technicalScore !== undefined) bid.qualityScore = req.body.technicalScore;
-  bid.technicalReviewedBy = oid(user.id);
-  bid.technicalReviewedAt = new Date();
-  await bid.save();
-  await evaluateRfqBids(rfq._id);
-  res.json({ _id: bid._id, technicalStatus: bid.technicalStatus, technicalRemarks: bid.technicalRemarks, qualityScore: bid.qualityScore });
-});
-
-/**
- * Opens the prices of a two-envelope tender once bidding has closed. The technical review is optional:
- * a bid that was not reviewed is priced like a qualified one, and only a disqualified bid is left out.
- */
-export const openFinancials = asyncHandler(async (req, res) => {
-  const user = currentUser(req);
-  const rfq = await loadRfq(req.params.id, user);
-  if (isBiddingOpen(rfq)) throw ApiError.unprocessable('Close bidding before opening the financials');
-  if (rfq.status === RFQ_STATUS.AWARDED || rfq.status === RFQ_STATUS.CANCELLED) throw ApiError.unprocessable(`RFQ is ${rfq.status}`);
-  if (!rfq.technicalEvaluation) throw ApiError.unprocessable('This RFQ has no technical evaluation: its prices are already open');
-  if (rfq.financialsOpenedAt) throw ApiError.conflict('The financials are already open');
-
-  const eligible = await Bid.exists({ rfq: rfq._id, status: BID_STATUS.SUBMITTED, technicalStatus: { $ne: TECHNICAL_STATUS.DISQUALIFIED } });
-  if (!eligible) {
-    throw ApiError.unprocessable('Every bid was disqualified or withdrawn, so there is nothing to open. Cancel this RFQ and float a new one.');
-  }
-
-  rfq.status = RFQ_STATUS.CLOSED;
-  rfq.financialsOpenedAt = new Date();
-  rfq.financialsOpenedBy = oid(user.id);
-  await rfq.save();
-  await evaluateRfqBids(rfq._id);
-  res.json(rfq);
-});
-
 // ---- Emergency purchase --------------------------------------------------------------
 
 /**
@@ -469,7 +413,6 @@ export const emergencyPurchase = asyncHandler(async (req, res) => {
     deliveryDays: req.body.deliveryDays,
     submittedBy: user.id,
     status: BID_STATUS.AWARDED,
-    technicalStatus: TECHNICAL_STATUS.QUALIFIED,
     rank: 1,
     notes: 'Emergency purchase: single direct quote',
   });
@@ -511,7 +454,7 @@ export const emergencyPurchase = asyncHandler(async (req, res) => {
 
 // ---- Bids --------------------------------------------------------------------------
 
-/** Vendor submits or revises their sealed bid while the RFQ is open. */
+/** Vendor submits or revises their bid while the RFQ is open. Other vendors never see it. */
 export const submitBid = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const rfq = await loadRfq(req.params.id, user);
@@ -554,7 +497,6 @@ export const submitBid = asyncHandler(async (req, res) => {
       revision: bid.revision + 1,
       submittedBy: user.id,
       submittedAt: new Date(),
-      technicalStatus: TECHNICAL_STATUS.PENDING,
     });
     await bid.save();
   } else {
@@ -570,7 +512,7 @@ export const submitBid = asyncHandler(async (req, res) => {
   }
 
   await evaluateRfqBids(rfq._id);
-  res.status(201).json(await Bid.findById(bid._id).select(rfq.technicalEvaluation ? VENDOR_SEALED_BID_FIELDS : VENDOR_BID_FIELDS));
+  res.status(201).json(await Bid.findById(bid._id).select(VENDOR_BID_FIELDS));
 });
 
 export const withdrawBid = asyncHandler(async (req, res) => {
@@ -584,7 +526,7 @@ export const withdrawBid = asyncHandler(async (req, res) => {
   bid.status = BID_STATUS.WITHDRAWN;
   await bid.save();
   await evaluateRfqBids(rfq._id);
-  res.json(await Bid.findById(bid._id).select(rfq.technicalEvaluation ? VENDOR_SEALED_BID_FIELDS : VENDOR_BID_FIELDS));
+  res.json(await Bid.findById(bid._id).select(VENDOR_BID_FIELDS));
 });
 
 /**
@@ -599,9 +541,6 @@ export const listRfqBids = asyncHandler(async (req, res) => {
   if (isVendor(user)) {
     const own = await Bid.findOne({ rfq: rfq._id, vendor: user.vendor }).select(VENDOR_BID_FIELDS);
     if (!isBiddingOpen(rfq)) return res.json({ bid: own && closedBidView(own) });
-    if (rfq.technicalEvaluation) {
-      return res.json({ bid: own && { ...own.toObject(), rank: undefined } });
-    }
     const totalBids = await Bid.countDocuments({ rfq: rfq._id, status: { $ne: BID_STATUS.WITHDRAWN } });
     return res.json({ bid: own, totalBids });
   }
@@ -610,16 +549,25 @@ export const listRfqBids = asyncHandler(async (req, res) => {
     .populate('vendor', 'companyName contactPerson vendorCode rating isMsme')
     .sort({ status: 1, rank: 1 });
 
-  const sealed = pricesSealed(rfq);
+  // Every bid and its prices, from the moment it is submitted.
   res.json(
     bids.map((bid) => {
-      const { totalAmount, taxAmount, grandTotal, rank, priceScore, items, ...rest } = bid.toObject();
+      const { items, ...rest } = bid.toObject();
       const lines = items.map((line) => {
         const rfqItem = rfq.items.find((i) => i._id.equals(line.rfqItem));
-        const named = { _id: line._id, rfqItem: line.rfqItem, quantity: line.quantity, title: rfqItem?.title, description: rfqItem?.description, uom: rfqItem?.uom };
-        return sealed ? named : { ...named, unitPrice: line.unitPrice, taxRate: line.taxRate, lineTotal: line.lineTotal };
+        return {
+          _id: line._id,
+          rfqItem: line.rfqItem,
+          quantity: line.quantity,
+          title: rfqItem?.title,
+          description: rfqItem?.description,
+          uom: rfqItem?.uom,
+          unitPrice: line.unitPrice,
+          taxRate: line.taxRate,
+          lineTotal: line.lineTotal,
+        };
       });
-      return { ...rest, items: lines, pricesSealed: sealed, ...(sealed ? {} : { totalAmount, taxAmount, grandTotal, rank, priceScore }) };
+      return { ...rest, items: lines };
     }),
   );
 });
@@ -654,8 +602,7 @@ export const biddingDashboard = asyncHandler(async (_req, res) => {
 
   const rows = rfqs.map((rfq) => {
     const rfqBids = byRfq.get(rfq._id.toString()) ?? [];
-    const sealed = pricesSealed(rfq);
-    const pricedBids = sealed ? [] : rfqBids.filter((b) => b.technicalStatus !== TECHNICAL_STATUS.DISQUALIFIED);
+    const pricedBids = rfqBids;
     const top = pricedBids.find((b) => b.status === BID_STATUS.AWARDED) ?? pricedBids.find((b) => b.rank === 1);
     const isLive = rfq.status === RFQ_STATUS.PUBLISHED && now >= rfq.openAt && now < rfq.closeAt;
     return {
@@ -667,7 +614,6 @@ export const biddingDashboard = asyncHandler(async (_req, res) => {
       closeAt: rfq.closeAt,
       timeRemainingMs: isLive ? rfq.closeAt.getTime() - now.getTime() : 0,
       totalBids: rfqBids.length,
-      pricesSealed: sealed,
       items: rfq.items.map((i) => `${i.title?.trim() || i.description} × ${i.quantity} ${i.uom}`),
       lowestBid: pricedBids.length ? Math.min(...pricedBids.map((b) => b.totalAmount)) : null,
       rankings: pricedBids

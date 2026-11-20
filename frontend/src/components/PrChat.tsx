@@ -137,7 +137,7 @@ export function PrChat({ prId, prNumber, vendorCanRead = false }: { prId: string
       placeholder={staff ? 'Write a message about this PR / PO' : 'Write a message about this order'}
       load={() => requisitionApi.messages(prId)}
       send={(text) => requisitionApi.sendMessage(prId, text)}
-      notice={staff && vendorCanRead ? 'The awarded vendor can read this conversation, including earlier messages. Use the vendor tabs on a card for private notes to one vendor.' : undefined}
+      notice={staff && vendorCanRead ? 'The selected vendor reads messages sent from the moment they were selected; everything earlier stays hidden from them. Use the vendor tabs on a card for private notes to one vendor.' : undefined}
     />
   );
 }

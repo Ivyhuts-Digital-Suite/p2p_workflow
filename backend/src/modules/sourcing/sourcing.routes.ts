@@ -11,7 +11,6 @@ import {
   escalationDecisionSchema,
   qualityScoreSchema,
   submitBidSchema,
-  technicalReviewSchema,
 } from './sourcing.validation';
 
 const router = Router();
@@ -29,7 +28,6 @@ router.post('/rfqs/:id/publish', procurement, ctrl.publishRfq);
 router.post('/rfqs/:id/close', procurement, ctrl.closeRfq);
 router.post('/rfqs/:id/cancel', procurement, ctrl.cancelRfq);
 router.post('/rfqs/:id/award', procurement, validate(awardSchema), ctrl.awardRfq);
-router.post('/rfqs/:id/open-financials', procurement, ctrl.openFinancials);
 router.post('/rfqs/:id/budget-escalation', procurement, validate(budgetEscalationSchema), ctrl.requestBudgetEscalation);
 router.post('/rfqs/:id/budget-escalation/decision', authorize(ROLES.FINANCE), validate(escalationDecisionSchema), ctrl.decideBudgetEscalation);
 router.post('/emergency-purchases', procurement, validate(emergencyPurchaseSchema), ctrl.emergencyPurchase);
@@ -38,6 +36,5 @@ router.get('/rfqs/:id/bids', authorize(ROLES.PROCUREMENT, ROLES.VENDOR), ctrl.li
 router.post('/rfqs/:id/bids', vendor, validate(submitBidSchema), ctrl.submitBid);
 router.post('/bids/:bidId/withdraw', vendor, ctrl.withdrawBid);
 router.patch('/bids/:bidId/quality-score', procurement, validate(qualityScoreSchema), ctrl.setQualityScore);
-router.patch('/bids/:bidId/technical-review', procurement, validate(technicalReviewSchema), ctrl.technicalReview);
 
 export default router;

@@ -1,11 +1,13 @@
-import { FilterQuery } from 'mongoose';
+import { FilterQuery, Types } from 'mongoose';
 import { ROLES } from '../../constants/roles';
-import { APPROVAL_STATUS, PO_STATUS, PR_STATUS, RATIFICATION_STATUS } from '../../constants/status';
+import { APPROVAL_STATUS, BID_STATUS, PO_STATUS, PR_STATUS, RATIFICATION_STATUS, RFQ_STATUS } from '../../constants/status';
 import { currentUser } from '../../middleware/auth';
+import { Bid } from '../../models/Bid';
 import { Department } from '../../models/Department';
 import { IPurchaseRequisition, PurchaseRequisition, PurchaseRequisitionDocument } from '../../models/PurchaseRequisition';
-import { PrMessage } from '../../models/PrMessage';
+import { IPrMessage, PrMessage } from '../../models/PrMessage';
 import { PurchaseOrder } from '../../models/PurchaseOrder';
+import { RFQ } from '../../models/RFQ';
 import { vendorPoScope } from '../../services/purchaseOrder.service';
 import { markRead, messageView } from '../../services/chat.service';
 import { optionalApprovalChain } from '../../services/doa.service';
@@ -40,16 +42,49 @@ function visibilityScope(user: AuthUser): FilterQuery<IPurchaseRequisition> {
 }
 
 /**
+ * The PR conversations a vendor takes part in, and when they joined each one. A vendor joins the
+ * conversation of a PR from the moment Procurement selects their bid (the RFQ's `awardedAt`), through
+ * the PO stage: never a losing vendor, and not once their PO is cancelled and the PR goes back to
+ * sourcing (that removes the PR's link to the RFQ). Messages from before they joined stay hidden from them.
+ */
+export async function vendorChatWindows(user: AuthUser): Promise<{ pr: Types.ObjectId; since: Date }[]> {
+  if (user.role !== ROLES.VENDOR || !user.vendor) return [];
+  const wonBids = await Bid.find({ vendor: user.vendor, status: BID_STATUS.AWARDED }).distinct('rfq');
+  const [wonRfqs, pos] = await Promise.all([
+    RFQ.find({ _id: { $in: wonBids }, status: RFQ_STATUS.AWARDED }).select('_id awardedAt'),
+    PurchaseOrder.find({ $and: [vendorPoScope(user.vendor), { status: { $ne: PO_STATUS.CANCELLED } }] }).select('_id rfq issuedAt'),
+  ]);
+  const poRfqs = await RFQ.find({ _id: { $in: pos.map((po) => po.rfq) } }).select('_id awardedAt');
+  const awardedAt = new Map([...wonRfqs, ...poRfqs].map((r) => [r._id.toString(), r.awardedAt]));
+  const poById = new Map(pos.map((po) => [po._id.toString(), po]));
+
+  const prs = await PurchaseRequisition.find({
+    $or: [{ rfq: { $in: wonRfqs.map((r) => r._id) } }, { status: PR_STATUS.PO_CREATED, purchaseOrder: { $in: pos.map((po) => po._id) } }],
+  }).select('_id rfq purchaseOrder');
+  return prs.map((pr) => {
+    const po = pr.purchaseOrder ? poById.get(pr.purchaseOrder.toString()) : undefined;
+    // The award time. An old record without one falls back to when its PO was issued, else shows nothing earlier.
+    const since = awardedAt.get(pr.rfq?.toString() ?? '') ?? awardedAt.get(po?.rfq.toString() ?? '') ?? po?.issuedAt ?? new Date();
+    return { pr: pr._id, since };
+  });
+}
+
+/** The messages of one PR conversation this user may see: all of them for staff, and from their selection on for a vendor. */
+export async function visibleMessages(prId: Types.ObjectId, user: AuthUser): Promise<FilterQuery<IPrMessage>> {
+  if (user.role !== ROLES.VENDOR) return { pr: prId };
+  const window = (await vendorChatWindows(user)).find((w) => w.pr.equals(prId));
+  if (!window) throw ApiError.notFound('Purchase requisition');
+  return { pr: prId, createdAt: { $gte: window.since } };
+}
+
+/**
  * Which PR conversations each role takes part in. Everyone who can open a PR can talk on it. The Store
- * also joins once a PR has a PO, because it receives the goods. A vendor joins the conversation of a PR
- * whose current PO is theirs and has been issued to them: never a losing vendor, never before the PO is
- * issued, and not once their PO is cancelled and the PR goes to someone else.
+ * also joins once a PR has a PO, because it receives the goods. A vendor: see vendorChatWindows.
  */
 export async function chatScope(user: AuthUser): Promise<FilterQuery<IPurchaseRequisition> | null> {
   if (user.role === ROLES.VENDOR) {
     if (!user.vendor) return null;
-    const pos = await PurchaseOrder.find({ $and: [vendorPoScope(user.vendor), { status: { $ne: PO_STATUS.CANCELLED } }] }).select('_id');
-    return { status: PR_STATUS.PO_CREATED, purchaseOrder: { $in: pos.map((po) => po._id) } };
+    return { _id: { $in: (await vendorChatWindows(user)).map((w) => w.pr) } };
   }
   if (user.role === ROLES.STORE) return { status: PR_STATUS.PO_CREATED };
   return visibilityScope(user);
@@ -316,8 +351,10 @@ export const cancelRequisition = asyncHandler(async (req, res) => {
 export const listMessages = asyncHandler(async (req, res) => {
   const user = currentUser(req);
   const pr = await loadChatPr(req.params.id, user);
-  await markRead({ pr: pr._id }, user);
-  const messages = await PrMessage.find({ pr: pr._id }).sort({ createdAt: 1 });
+  // A vendor sees, and reads, only what was said from the moment they were selected.
+  const visible = await visibleMessages(pr._id, user);
+  await markRead(visible, user);
+  const messages = await PrMessage.find(visible).sort({ createdAt: 1 });
   res.json(messages.map((m) => messageView(m, user)));
 });
 

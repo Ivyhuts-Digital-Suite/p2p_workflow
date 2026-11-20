@@ -301,8 +301,6 @@ export interface Rfq {
   awardedBid?: { _id: string; vendor?: Ref; totalAmount?: number; taxAmount?: number; grandTotal?: number; rank?: number };
   awardedAt?: string;
   department?: Ref;
-  technicalEvaluation?: boolean;
-  financialsOpenedAt?: string;
   requiredLicences?: string[];
   isEmergency?: boolean;
   budgetEstimate?: number;
@@ -321,10 +319,6 @@ export interface Bid {
   taxAmount?: number;
   grandTotal?: number;
   deliveryDays: number;
-  /** A two-envelope tender whose prices have not been opened */
-  pricesSealed?: boolean;
-  technicalStatus?: string;
-  technicalRemarks?: string;
   qualityScore?: number;
   priceScore?: number;
   rank?: number;
@@ -342,7 +336,6 @@ export interface DashboardRow {
   closeAt: string;
   timeRemainingMs: number;
   totalBids: number;
-  pricesSealed?: boolean;
   items?: string[];
   lowestBid: number | null;
   rankings: { rank: number; companyName: string; totalAmount: number }[];

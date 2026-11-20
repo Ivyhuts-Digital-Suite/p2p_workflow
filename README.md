@@ -105,7 +105,7 @@ p2p_workflow/
 | `PurchaseRequisition` | Line items, estimate, status, `isActive` (deactivation), audit history |
 | `Vendor` | KYC fields (GSTIN, PAN, bank details), default TDS section, rating, approval status |
 | `RFQ` | Consolidated PR lines, invited vendors, bidding window, award decision and justification |
-| `Bid` | One sealed bid per vendor per RFQ (revisable), quoted GST, lowest-price rank, technical review |
+| `Bid` | One bid per vendor per RFQ (revisable), quoted GST, lowest-price rank, quality score |
 | `DoaRule` | Value bands mapped to an ordered approval chain of roles, for POs, PRs or payments |
 | `PurchaseOrder` | Lines with `receivedQty` and `invoicedQty`, DoA approval steps, lifecycle status |
 | `GoodsReceipt` | Invoice / challan number, box count, and per line: received, accepted, rejected and short quantities with reasons, and quality result |
@@ -134,10 +134,10 @@ p2p_workflow/
 
 **Module 2: Sourcing & live bidding** (`/api/sourcing`)
 - An RFQ consolidates approved, active PRs from a single department. PRs are claimed with a conditional update, so two RFQs can't source the same PR.
-- Bidding is **sealed**: vendors see only their own bid and, while bidding is open, their current rank and the total bid count.
+- Vendors never see each other's bids: a vendor sees only their own bid and, while bidding is open, their current rank and the total bid count.
 - Vendors can revise or withdraw a bid until the RFQ closes.
 - Bids are ranked automatically by lowest pre-tax total (L1, L2, …). Equal quotes rank by earlier submission. Vendors quote GST per line, shown as Actual + Tax = Total, but rank is on the pre-tax value because input GST is recoverable.
-- **Technical evaluation:** a tender with `technicalEvaluation` is two-envelope. Nobody sees prices or ranks, including Procurement and the bidding dashboard, until bidding has closed and the financials are opened (`POST /sourcing/rfqs/:id/open-financials`). The technical review (`PATCH /sourcing/bids/:bidId/technical-review`) is optional and does not gate the financials. On any RFQ, a disqualified bid is left out of the ranking and can't be selected. Vendors never see the result.
+- **Direct selection:** there are no sealed envelopes and no technical review. Procurement and the bidding dashboard see every bid and its prices as soon as it is submitted, ranked by lowest price, and each live bid has a **Select vendor** button (`POST /sourcing/rfqs/:id/award`). Selecting while bidding is still open closes it for every vendor. Selection runs the usual checks: a written justification for a non-L1 vendor, licences, the budget re-check and DoA, then generates the PO.
 - **Vendor licences:** vendors add documents with `POST /vendors/me/documents`, and Procurement verifies them with `POST /vendors/:id/documents/:docId/verify`. An RFQ can require licence types. A vendor can't bid or be awarded with a required licence missing, unverified or expired, or with any licence type on file that has no current document. Files aren't stored: a document holds its number, expiry and an optional link.
 - **Budget re-check:** at award the commitment moves from the PR estimates to the quoted value. Above the estimate needs a written reason (`409 BUDGET_OVERRUN`). Beyond what is left of the budget is refused (`422 BUDGET_EXCEEDED`) until Procurement escalates (`POST /sourcing/rfqs/:id/budget-escalation`) and Finance raises the allocation (`POST .../decision`). Cancelling the PO undoes the change.
 - Procurement (or an Admin as higher authority) can select any vendor. Selecting one other than L1 requires a written justification of at least 10 characters, which goes into the audit trail. A vendor who is no longer approved can't be selected.
@@ -159,7 +159,7 @@ p2p_workflow/
 - Each PR has its own conversation (`GET|POST /requisitions/:id/messages`), open to everyone who can see the PR and reached from the PR itself or from **Start Chat** on its journey card. A sent message shows one tick, and a blue double tick once someone else has read it; hovering shows who. An auditor can read the thread without it showing as a read receipt. The Store joins a PR's conversation once it has a PO. The vendor whose PO is issued joins it too: they read the full history and can post, but see staff by team name only. A losing vendor never joins, and a vendor leaves it if their PO is cancelled. Staff see a notice in the conversation once the vendor can read it.
 - Every journey card has a chat icon (💬) with the user's unread count for that card (`GET /chat/unread`): messages from others that they have not opened, each counted once, cleared for that user only when they read it.
   - Internal cards open the PR conversation. On a card with an RFQ, Procurement and Admin also get a tab per vendor (`GET /chat/rfqs/:rfqId/vendors`, `GET|POST /chat/rfqs/:rfqId/vendors/:vendorId/messages`), and the Auditor can read them.
-  - Vendor cards open the vendor's private conversation with Procurement on that RFQ (`GET|POST /chat/rfqs/:rfqId/messages`). Once their PO is issued, the card also opens the order's PR/PO conversation, each with its own unread count. A vendor sees only their own conversations, and the buyer's team name, never a staff member's.
+  - Vendor cards open the vendor's private conversation with Procurement on that RFQ (`GET|POST /chat/rfqs/:rfqId/messages`). From the moment Procurement selects them, the card also opens the order's PR/PO conversation, each with its own unread count. The vendor sees, and is counted unread for, only messages sent at or after their selection (the RFQ's `awardedAt`); everything said on the PR before that stays hidden from them, while staff keep the full history. A losing vendor never joins it, and a vendor leaves it if their PO is cancelled. A vendor sees only their own conversations, and the buyer's team name, never a staff member's.
   - A message is never unread for the person who sent it.
 - Rows, track steps and locked actions say who a document is waiting on (`pendingAt`). Staff names go to internal users only: a vendor sees just the team.
 - The dashboard's Journey Path (`GET /journey`) ends each track with goods receipt and inspection as one Store step, the invoice, then one Finance stage: invoice verification and 3-way match (including booking), tax verification, any payment approval, and payment release. Locks only name active roles: an old record naming a merged role resolves to the role that does that work now.
@@ -230,8 +230,8 @@ GET|POST /vendors                   POST /vendors/:id/approve|suspend|blacklist 
 GET|POST /requisitions              PATCH /requisitions/:id
 POST /requisitions/:id/submit|approve|reject|cancel|ratify       GET /chat/unread   GET|POST /chat/rfqs/:rfqId/messages|vendors/:vendorId/messages
 GET /journey                        POST /vendors/me/documents          POST /vendors/:id/documents/:docId/verify
-GET /sourcing/dashboard             GET|POST /sourcing/rfqs             POST /sourcing/rfqs/:id/publish|close|cancel|award|open-financials|budget-escalation
-GET|POST /sourcing/rfqs/:id/bids    POST /sourcing/bids/:bidId/withdraw PATCH /sourcing/bids/:bidId/quality-score|technical-review
+GET /sourcing/dashboard             GET|POST /sourcing/rfqs             POST /sourcing/rfqs/:id/publish|close|cancel|award|budget-escalation
+GET|POST /sourcing/rfqs/:id/bids    POST /sourcing/bids/:bidId/withdraw PATCH /sourcing/bids/:bidId/quality-score
 POST /sourcing/rfqs/:id/budget-escalation/decision                      POST /sourcing/emergency-purchases
 GET /purchase-orders?view=          GET /purchase-orders/summary|invoiceable      POST /purchase-orders/from-bid/:bidId
 POST /purchase-orders/:id/approve|reject|cancel    (issue: only for older POs approved but never issued)
@@ -258,4 +258,4 @@ Open `/api/health` on the deployed site. With `"db":"up"` the backend is connect
 
 - **Transactions:** multi-document updates (GRN + PO + inventory, payment + invoice + budget) are done in a careful order, with conditional updates and optimistic concurrency. On a MongoDB replica set, wrap them in `session.withTransaction()`.
 - **Tax tables:** TDS rates and thresholds change every year with the Finance Act. Move `TDS_SECTIONS` into the database, and validate GSTINs against the GST portal API.
-- **Still to build:** file attachments (quotes, invoices, delivery challans, licences), notifications, scheduled auto-close of RFQs at `closeAt`, budget roll-over between fiscal years, the Sec 194Q annual threshold, a technical reviewer role for clinical users, returns of released stock, notes after tax verification, and pagination on list endpoints.
+- **Still to build:** file attachments (quotes, invoices, delivery challans, licences), notifications, scheduled auto-close of RFQs at `closeAt`, budget roll-over between fiscal years, the Sec 194Q annual threshold, returns of released stock, notes after tax verification, and pagination on list endpoints.

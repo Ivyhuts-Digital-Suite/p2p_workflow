@@ -108,7 +108,6 @@ export const sourcingApi = {
     requisitionIds: string[];
     invitedVendorIds: string[];
     closeAt: string;
-    technicalEvaluation?: boolean;
     requiredLicences?: string[];
   }) => data<Rfq>(api.post('/sourcing/rfqs', body)),
   publish: (id: string) => data<Rfq>(api.post(`/sourcing/rfqs/${id}/publish`)),
@@ -116,9 +115,6 @@ export const sourcingApi = {
   cancel: (id: string) => data<Rfq>(api.post(`/sourcing/rfqs/${id}/cancel`)),
   award: (id: string, body: { bidId: string; taxRate?: number; justification?: string; overrunReason?: string }) =>
     data<{ po?: PurchaseOrder; poError?: string }>(api.post(`/sourcing/rfqs/${id}/award`, body)),
-  openFinancials: (id: string) => data<Rfq>(api.post(`/sourcing/rfqs/${id}/open-financials`)),
-  technicalReview: (bidId: string, body: { result: 'QUALIFIED' | 'DISQUALIFIED'; remarks?: string; technicalScore?: number }) =>
-    data<Bid>(api.patch(`/sourcing/bids/${bidId}/technical-review`, body)),
   escalateBudget: (id: string, bidId: string, reason: string) => data<Rfq>(api.post(`/sourcing/rfqs/${id}/budget-escalation`, { bidId, reason })),
   decideEscalation: (id: string, decision: 'APPROVE' | 'REJECT', remarks?: string) =>
     data<Rfq>(api.post(`/sourcing/rfqs/${id}/budget-escalation/decision`, { decision, remarks })),

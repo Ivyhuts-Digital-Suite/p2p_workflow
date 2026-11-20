@@ -49,10 +49,6 @@ export interface IRfq {
   /** The PO generated from the award */
   purchaseOrder?: Types.ObjectId;
   createdBy: Types.ObjectId;
-  /** Two-envelope tender: prices stay sealed until the technical review is done and financials are opened */
-  technicalEvaluation: boolean;
-  financialsOpenedAt?: Date;
-  financialsOpenedBy?: Types.ObjectId;
   /** A vendor needs a verified, unexpired licence of each of these types to bid or be awarded */
   requiredLicences: LicenceType[];
   /** Raised through the emergency route: one direct quote, no competition */
@@ -95,9 +91,6 @@ const rfqSchema = new Schema<IRfq>(
     awardedAt: Date,
     purchaseOrder: { type: Schema.Types.ObjectId, ref: 'PurchaseOrder' },
     createdBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    technicalEvaluation: { type: Boolean, default: false },
-    financialsOpenedAt: Date,
-    financialsOpenedBy: { type: Schema.Types.ObjectId, ref: 'User' },
     requiredLicences: { type: [{ type: String, enum: LICENCE_TYPES }], default: [] },
     isEmergency: { type: Boolean, default: false },
     budgetVariance: Number,

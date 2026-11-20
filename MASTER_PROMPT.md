@@ -324,7 +324,7 @@ Build the project for Vercel and list the environment variables it needs.
 
 1. **PR edit until HOD approval.** The requester can edit their PR only until the HOD approves it. Enforced in the UI and the API. A rejected PR stays editable for resubmission.
 2. **RFQ Initiated.** Once a PR has an RFQ, "Initiate RFQ" is replaced by an **RFQ Initiated** label and a **View RFQ** button that opens that exact RFQ, expanded, under RFQs & Bids. Duplicate RFQs stay blocked.
-3. **No mandatory Qualify/Disqualify gate.** Procurement can open the financials of a two-envelope tender without reviewing every bid. Technical review stays optional; disqualified bids are still not ranked or awarded. Prices stay sealed until opened, and vendors never see rival prices.
+3. **[Replaced in Phase 27: the two-envelope tender and technical review are removed entirely]** **No mandatory Qualify/Disqualify gate.** Procurement can open the financials of a two-envelope tender without reviewing every bid. Technical review stays optional; disqualified bids are still not ranked or awarded. Prices stay sealed until opened, and vendors never see rival prices.
 4. **One Procurement user.** Remove the `procurement2` demo account from the seed, login chips and tests (never delete it from a live database). The journey no longer has separate "PO approval" and "PO issued" stages: one **"PO generated"** step, which waits on HOD/Finance only when the PO is above Procurement's authority.
 5. **Automatic PO.** Selecting the winning vendor generates the PO. If its Procurement approval level is within the Procurement user's DoA authority, it is approved automatically, and a PO with no further levels is issued at once. HOD/Finance levels, budget checks and escalations still apply, and the final approval issues the PO automatically.
 6. **No vendor acknowledgement.** PO generated → Store GRN. Vendors can invoice as soon as the PO is issued. Vendors still see their POs.
@@ -354,10 +354,36 @@ Build the project for Vercel and list the environment variables it needs.
 
 ## Phase 26: The awarded vendor joins the PR/PO conversation (13 Nov)
 
+**[Partly replaced in Phase 27: the vendor joins from the moment they are selected, not once the PO is issued.]**
+
 1. **Vendor chat access.** The vendor a PO is awarded and issued to can read the full history of that PR/PO conversation, see replies from internal users, and post in it, with per-user unread badges and WhatsApp-style read receipts.
    - Only for their own live PO: never a losing vendor, never before the PO is issued, and not after their PO is cancelled and the PR sourced again.
    - The vendor sees internal senders and readers by team ("Procurement", "Finance"), never by staff name.
    - The vendor's journey card shows the order conversation and their private conversation with the buyer, each with its own unread count.
 2. **Never count your own messages.** A message is unread only for users other than its sender, in every kind of conversation.
 3. Run the typechecks and tests afterwards.
+
+## Phase 27: No envelopes, direct vendor selection, vendor chat from the RFQ stage (20 Nov)
+
+1. **Remove the two-envelope and Qualify/Disqualify workflow completely**, backend and frontend:
+   - Remove the technical evaluation gate, the Qualify/Disqualify buttons, the technical review scores and remarks, and the "Open financials" step and button.
+   - Remove it from the RFQ creation form, the RFQs & Bids panel and the bidding dashboard.
+   - Show every submitted bid, with its details and prices, in the bids list as soon as it is submitted. There are no sealed envelopes, and the list refreshes while bidding is open.
+   - Put a **Select vendor** button next to every submitted bid. It works during bidding (selecting then closes bidding for every vendor) or after it.
+   - Selection still runs the existing checks and generates the PO automatically: a non-L1 justification, licences, the budget re-check and escalation, and DoA.
+   - Vendors still never see each other's bids, and a losing vendor never learns of the award.
+2. **Vendor chat from the RFQ stage.**
+   - An invited vendor has their private conversation with the buyer (Procurement and Admin; the Auditor reads it) from the moment they receive the RFQ, through bidding, selection and the PO stage. It shows the full history and internal replies by team name, lets the vendor send messages, and has per-user unread badges and ✓ / blue ✓✓ read receipts.
+   - The selected vendor also joins the shared PR/PO conversation **from the moment they are selected**, not when the PO is issued. They can post there. **[Replaced in Phase 28: they see only messages from their selection on.]**
+   - A losing vendor never joins it, and the vendor leaves it if their PO is cancelled.
+   - A user's own messages are never unread for them, in any conversation.
+3. Update the end-to-end tests, run the typechecks, and make sure every test passes.
+
+## Phase 28: Hide earlier PR messages from the selected vendor, then push (20 Nov)
+
+- In the shared PR/PO conversation, a selected vendor sees **only messages sent at or after their selection** (the RFQ's `awardedAt`).
+- Their unread counts exclude everything sent before it, and reading the conversation leaves no read receipt on the hidden messages.
+- Every internal message sent on that PR before the selection stays completely hidden from the vendor.
+- Internal staff (Requester, HOD, Procurement, Finance, Store, Admin, Auditor) keep the full history.
+- Once all tests pass, commit everything, including the Phase 27 changes, and push to `main`.
 

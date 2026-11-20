@@ -73,7 +73,7 @@ function taskPage(step: string, isVendor: boolean): string | null {
   if (['PO generated', 'PO received', 'Closed'].includes(step)) return '/purchase-orders';
   if (step === 'Bid submitted' || step === 'Bidding closed') return isVendor ? '/vendor/rfqs' : '/sourcing';
   if (step === 'RFQ published' || step === 'Emergency PO') return '/requisitions';
-  if (['Bidding', 'Technical evaluation', 'Vendor selected'].includes(step)) return '/sourcing';
+  if (['Bidding', 'Vendor selected'].includes(step)) return '/sourcing';
   if (step === 'PR raised' || step.endsWith(' approval')) return '/requisitions';
   return null;
 }
@@ -97,7 +97,7 @@ function GoToTask({ step }: { step?: string }) {
   );
 }
 
-/** Roles that take part in a PR's conversation. A vendor joins only once their PO is issued (the server sends prId then). */
+/** Roles that take part in a PR's conversation. A vendor joins once their bid is selected (the server sends prId then). */
 const PR_CHAT_ROLES = ['REQUESTER', 'HOD', 'PROCUREMENT', 'FINANCE', 'STORE', 'ADMIN', 'AUDITOR'];
 /** Roles that talk to vendors on an RFQ (the Auditor reads only). */
 const VENDOR_THREAD_ROLES = ['PROCUREMENT', 'ADMIN', 'AUDITOR'];
@@ -116,7 +116,8 @@ export function cardUnread(track: JourneyTrack, unread: ChatUnread | null | unde
 }
 
 /** On a staff member's card: the awarded vendor reads the PR conversation once the PO is issued. */
-const vendorJoined = (track: JourneyTrack) => track.steps.some((s) => s.label === 'PO generated' && s.state === 'done');
+/** The selected vendor reads the PR/PO conversation from the moment they are selected. */
+const vendorJoined = (track: JourneyTrack) => track.steps.some((s) => s.label === 'Vendor selected' && s.state === 'done');
 
 /** The chat icon on a journey card, with this user's unread count for that card's conversations. */
 function ChatButton({ count, onClick, subject }: { count: number; onClick: () => void; subject: string }) {

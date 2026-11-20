@@ -20,7 +20,6 @@ export function CreateRfqForm({ onCreated, onCancel, fromPr }: { onCreated: () =
   const [title, setTitle] = useState(fromPr.title);
   const [vendorIds, setVendorIds] = useState<string[]>([]);
   const [closeAt, setCloseAt] = useState(defaultClose);
-  const [technicalEvaluation, setTechnicalEvaluation] = useState(true);
   const { run, error, busy } = useAction(onCreated);
 
   const toggle = (id: string) => setVendorIds((list) => (list.includes(id) ? list.filter((x) => x !== id) : [...list, id]));
@@ -36,7 +35,6 @@ export function CreateRfqForm({ onCreated, onCancel, fromPr }: { onCreated: () =
           requisitionIds: [fromPr._id],
           invitedVendorIds: toSelected ? vendorIds : [],
           closeAt: new Date(closeAt).toISOString(),
-          technicalEvaluation,
         });
         await sourcingApi.publish(rfq._id);
       },
@@ -103,10 +101,6 @@ export function CreateRfqForm({ onCreated, onCancel, fromPr }: { onCreated: () =
           </label>
         ))}
       </fieldset>
-      <label className="check">
-        <input type="checkbox" checked={technicalEvaluation} onChange={(e) => setTechnicalEvaluation(e.target.checked)} />
-        Two-envelope tender: review bids technically before anyone sees the prices
-      </label>
       <div className="form-footer">
         <div className="spacer" />
         <button type="button" className="btn btn-ghost" onClick={onCancel}>

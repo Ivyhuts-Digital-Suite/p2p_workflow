@@ -66,7 +66,6 @@ export function SourcingPage() {
                   </td>
                   <td>
                     {rfq.title}
-                    {rfq.technicalEvaluation && <div className="muted small">Two-envelope</div>}
                   </td>
                   <td>
                     <ul className="item-list">
