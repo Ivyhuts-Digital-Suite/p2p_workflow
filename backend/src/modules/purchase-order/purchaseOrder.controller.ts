@@ -4,6 +4,7 @@ import {
   APPROVAL_STATUS,
   BID_STATUS,
   INVOICE_STATUS,
+  ITEM_TYPE,
   PO_INVOICEABLE_STATUSES,
   PO_PAST_STATUSES,
   PO_STATUS,
@@ -12,7 +13,7 @@ import {
 } from '../../constants/status';
 import { currentUser } from '../../middleware/auth';
 import { Bid } from '../../models/Bid';
-import { Invoice } from '../../models/Invoice';
+import { IInvoice, Invoice } from '../../models/Invoice';
 import { IPurchaseOrder, PurchaseOrder, PurchaseOrderDocument } from '../../models/PurchaseOrder';
 import { PurchaseRequisition } from '../../models/PurchaseRequisition';
 import { RFQ } from '../../models/RFQ';
@@ -24,9 +25,100 @@ import { loadDirectory, poPendingAt } from '../../services/workflow.service';
 import { AuthUser } from '../../types/auth';
 import { ApiError } from '../../utils/ApiError';
 import { asyncHandler } from '../../utils/asyncHandler';
+import { round2 } from '../../utils/money';
 import { oid } from '../../utils/objectId';
 
 const BILLED_INVOICE_STATUSES: string[] = [INVOICE_STATUS.BOOKED, INVOICE_STATUS.TAX_VERIFIED, INVOICE_STATUS.PAID];
+/** POs whose goods the Store can still receive */
+const RECEIVABLE_STATUSES: string[] = [PO_STATUS.ISSUED, PO_STATUS.ACKNOWLEDGED, PO_STATUS.PARTIALLY_RECEIVED];
+
+type InvoiceLines = Pick<
+  IInvoice,
+  'purchaseOrder' | 'invoiceNumber' | 'internalRef' | 'invoiceDate' | 'items' | 'status' | 'subtotal' | 'gstAmount' | 'total' | 'boxesOnPaperwork'
+> & { _id: Types.ObjectId };
+
+/** Each PO's invoices that are still live (not rejected), oldest first. */
+async function liveInvoicesByPo(pos: PurchaseOrderDocument[]): Promise<Map<string, InvoiceLines[]>> {
+  const invoices = await Invoice.find({ purchaseOrder: { $in: pos.map((po) => po._id) }, status: { $ne: INVOICE_STATUS.REJECTED } })
+    .select('purchaseOrder invoiceNumber internalRef invoiceDate items status subtotal gstAmount total boxesOnPaperwork')
+    .sort({ createdAt: 1 })
+    .lean<InvoiceLines[]>();
+  const byPo = new Map<string, InvoiceLines[]>();
+  for (const invoice of invoices) {
+    const key = invoice.purchaseOrder.toString();
+    byPo.set(key, [...(byPo.get(key) ?? []), invoice]);
+  }
+  return byPo;
+}
+
+/** Per PO line, what the vendor can still invoice: ordered, less what their live invoices already bill. */
+function openToInvoice(po: PurchaseOrderDocument, invoices: InvoiceLines[]): Map<string, number> {
+  const billed = new Map<string, number>();
+  for (const invoice of invoices) {
+    for (const line of invoice.items) billed.set(line.poItem.toString(), (billed.get(line.poItem.toString()) ?? 0) + line.quantity);
+  }
+  return new Map(po.items.map((i) => [i._id.toString(), Math.max(round2(i.quantity - (billed.get(i._id.toString()) ?? 0)), 0)]));
+}
+
+/**
+ * The vendor invoice the Store receives this PO's goods against: the oldest live invoice on the PO with goods
+ * still to arrive, and those quantities. What has been accepted so far is counted against invoices oldest first.
+ */
+function invoiceToReceive(po: PurchaseOrderDocument, invoices: InvoiceLines[]) {
+  if (!RECEIVABLE_STATUSES.includes(po.status)) return undefined;
+  const goods = new Map(po.items.filter((i) => i.itemType !== ITEM_TYPE.SERVICE).map((i) => [i._id.toString(), i]));
+  const accepted = new Map([...goods.values()].map((i) => [i._id.toString(), i.receivedQty]));
+  for (const invoice of invoices) {
+    const toReceive: { poItem: Types.ObjectId; quantity: number }[] = [];
+    for (const line of invoice.items) {
+      const key = line.poItem.toString();
+      const poItem = goods.get(key);
+      if (!poItem) continue;
+      const covered = Math.min(line.quantity, accepted.get(key) ?? 0);
+      accepted.set(key, round2((accepted.get(key) ?? 0) - covered));
+      // Never more than the PO still expects on that line.
+      const quantity = Math.min(round2(line.quantity - covered), round2(poItem.quantity - poItem.receivedQty));
+      if (quantity > 0) toReceive.push({ poItem: line.poItem, quantity });
+    }
+    if (toReceive.length) {
+      return {
+        invoiceId: invoice._id,
+        invoiceNumber: invoice.invoiceNumber,
+        internalRef: invoice.internalRef,
+        invoiceDate: invoice.invoiceDate,
+        boxesOnPaperwork: invoice.boxesOnPaperwork ?? 0,
+        items: toReceive,
+      };
+    }
+  }
+  return undefined;
+}
+
+/** A submitted vendor invoice as the Store sees it from the PO: the bill, read only. */
+function invoiceView(invoice: InvoiceLines) {
+  return {
+    _id: invoice._id,
+    internalRef: invoice.internalRef,
+    invoiceNumber: invoice.invoiceNumber,
+    invoiceDate: invoice.invoiceDate,
+    status: invoice.status,
+    boxesOnPaperwork: invoice.boxesOnPaperwork ?? 0,
+    items: invoice.items.map((l) => ({ poItem: l.poItem, title: l.title, description: l.description, quantity: l.quantity, unitPrice: l.unitPrice, taxRate: l.taxRate, lineTotal: l.lineTotal })),
+    subtotal: invoice.subtotal,
+    gstAmount: invoice.gstAmount,
+    total: invoice.total,
+  };
+}
+
+/** The invoice and receipt state of one PO, for its row: what can be invoiced, and what the Store receives against. */
+function invoiceFlow(po: PurchaseOrderDocument, invoices: InvoiceLines[]) {
+  const open = openToInvoice(po, invoices);
+  return {
+    openToInvoice: open,
+    canInvoice: PO_VENDOR_INVOICEABLE_STATUSES.includes(po.status) && [...open.values()].some((q) => q > 0),
+    invoiceToReceive: invoiceToReceive(po, invoices),
+  };
+}
 
 function visibilityScope(user: AuthUser): FilterQuery<IPurchaseOrder> {
   switch (user.role) {
@@ -118,13 +210,22 @@ export const listPurchaseOrders = asyncHandler(async (req, res) => {
   ]);
   const billingByPo = new Map(billing.map((b) => [b._id.toString(), b]));
   const directory = await loadDirectory(user);
+  const invoicesOf = await liveInvoicesByPo(pos);
   res.json(
     pos.map((po) => {
       const billed = billingByPo.get(po._id.toString());
       const department = po.department as unknown as { _id: Types.ObjectId } | undefined;
+      const view = po.toObject();
+      // Bound to this PO alone: its own lines, and its own vendor invoice for the Store.
+      const flow = invoiceFlow(po, invoicesOf.get(po._id.toString()) ?? []);
       return vendorSafe(
         {
-          ...po.toObject(),
+          ...view,
+          items: view.items.map((i) => ({ ...i, openToInvoiceQty: flow.openToInvoice.get(i._id.toString()) ?? 0 })),
+          canInvoice: flow.canInvoice,
+          invoiceToReceive: flow.invoiceToReceive,
+          // The Store reads this PO's own submitted invoices here, without the Invoices tab.
+          ...(user.role === ROLES.STORE && { invoices: (invoicesOf.get(po._id.toString()) ?? []).map(invoiceView) }),
           invoicedAmount: billed?.invoiced ?? 0,
           paidAmount: billed?.paid ?? 0,
           pendingAt: poPendingAt({ ...po.toObject(), department: department?._id } as IPurchaseOrder, directory),
@@ -158,15 +259,17 @@ export const listInvoiceablePurchaseOrders = asyncHandler(async (req, res) => {
   const found = await PurchaseOrder.find({ $and: [visibilityScope(user), { status: { $in: statuses } }] })
     .populate('vendor', 'companyName vendorCode contactPerson')
     .sort({ createdAt: -1 });
-  const pos = found.filter((po) => po.items.some((i) => i.invoicedQty < i.quantity));
+  const invoicesOf = await liveInvoicesByPo(found);
+  const pos = found.filter((po) => [...openToInvoice(po, invoicesOf.get(po._id.toString()) ?? []).values()].some((q) => q > 0));
   const cleared = await clearedQuantities(pos);
   res.json(
     pos.map((po) => {
       const view = po.toObject();
+      const open = openToInvoice(po, invoicesOf.get(po._id.toString()) ?? []);
       return vendorSafe(
         {
           ...view,
-          items: view.items.map((i) => ({ ...i, clearedQty: cleared.get(i._id.toString()) ?? 0 })),
+          items: view.items.map((i) => ({ ...i, clearedQty: cleared.get(i._id.toString()) ?? 0, openToInvoiceQty: open.get(i._id.toString()) ?? 0 })),
         },
         user,
       );

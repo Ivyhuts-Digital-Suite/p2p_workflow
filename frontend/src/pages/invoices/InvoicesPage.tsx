@@ -14,7 +14,8 @@ const OPEN = ['SUBMITTED', 'EXCEPTION', 'MATCHED'];
 export function InvoicesPage() {
   const { user, hasRole } = useAuth();
   const isFinance = hasRole('FINANCE');
-  const canSubmit = hasRole('FINANCE', 'VENDOR');
+  // Vendors submit invoices from each PO on Purchase Orders; Finance still keys paper invoices here.
+  const canSubmit = hasRole('FINANCE');
   const [showForm, setShowForm] = useState(false);
   const [statusFilter, setStatusFilter] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);

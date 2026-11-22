@@ -9,6 +9,8 @@ export const submitInvoiceSchema = z.object({
   dueDate: z.coerce.date().optional(),
   /** Gross total printed on the invoice */
   claimedTotal: z.number().nonnegative(),
+  /** Boxes / cartons on the vendor's paperwork */
+  boxesOnPaperwork: z.number().int().nonnegative().default(0),
   items: z
     .array(
       z.object({

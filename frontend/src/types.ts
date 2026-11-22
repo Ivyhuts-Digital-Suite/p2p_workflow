@@ -100,6 +100,8 @@ export interface JourneyStep {
   status: string;
   state: 'done' | 'current' | 'blocked' | 'locked';
   detail?: string;
+  /** When bidding ends, or when it closed */
+  deadline?: { label: 'Ends' | 'Closed'; at: string };
 }
 
 export interface JourneyTrack {
@@ -364,6 +366,33 @@ export interface PoItem {
   commissionedQty?: number;
   /** How much the Store or a sign-off has cleared for billing; only on the invoiceable list */
   clearedQty?: number;
+  /** Ordered, less what the vendor's live invoices already bill */
+  openToInvoiceQty?: number;
+}
+
+/** The vendor invoice the Store receives a PO's goods against, and what is still to arrive on it */
+export interface InvoiceToReceive {
+  invoiceId: string;
+  invoiceNumber: string;
+  internalRef: string;
+  invoiceDate: string;
+  /** Boxes / cartons on the vendor's paperwork, from the invoice */
+  boxesOnPaperwork?: number;
+  items: { poItem: string; quantity: number }[];
+}
+
+/** A vendor invoice on one PO, as the Store reads it from that PO's row */
+export interface PoInvoice {
+  _id: string;
+  internalRef: string;
+  invoiceNumber: string;
+  invoiceDate: string;
+  status: string;
+  boxesOnPaperwork: number;
+  items: { poItem: string; title?: string; description: string; quantity: number; unitPrice: number; taxRate: number; lineTotal: number }[];
+  subtotal: number;
+  gstAmount: number;
+  total: number;
 }
 
 export interface PurchaseOrder {
@@ -388,6 +417,12 @@ export interface PurchaseOrder {
   /** Total of booked and paid invoices */
   invoicedAmount: number;
   paidAmount: number;
+  /** The vendor can still invoice part of this PO */
+  canInvoice?: boolean;
+  /** This PO's vendor invoice with goods still to receive, for the Store */
+  invoiceToReceive?: InvoiceToReceive;
+  /** This PO's submitted vendor invoices; sent to the Store only */
+  invoices?: PoInvoice[];
 }
 
 export interface PoSummary {
@@ -405,6 +440,8 @@ export interface GoodsReceipt {
   deliveryNoteNumber?: string;
   physicalCheck?: { boxesExpected: number; boxesCounted: number };
   qcRemarks?: string;
+  /** Photos of the delivery, as image data URLs */
+  photos?: string[];
   status: string;
   items: {
     _id: string;

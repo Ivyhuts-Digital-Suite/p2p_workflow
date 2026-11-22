@@ -1,10 +1,11 @@
 import { env } from '../config/env';
-import { GRN_STATUS, ITEM_TYPE, MATCH_STATUS, MatchStatus, NEEDS_COMMISSIONING } from '../constants/status';
+import { GRN_STATUS, INVOICE_STATUS, ITEM_TYPE, MATCH_STATUS, MatchStatus, NEEDS_COMMISSIONING } from '../constants/status';
 import { GoodsReceipt } from '../models/GoodsReceipt';
-import { IMatchException, InvoiceDocument } from '../models/Invoice';
+import { IMatchException, Invoice, InvoiceDocument } from '../models/Invoice';
 import { IPoItem, PurchaseOrder, PurchaseOrderDocument } from '../models/PurchaseOrder';
 import { ApiError } from '../utils/ApiError';
 import { calcOrderTotals, round2 } from '../utils/money';
+import { oid } from '../utils/objectId';
 
 export interface MatchResult {
   status: MatchStatus;
@@ -55,6 +56,9 @@ export async function clearedQuantities(pos: PurchaseOrderDocument[]): Promise<M
  *   - GST rate equals PO tax rate
  * Header: vendor-claimed total must equal the recomputed total, and the invoice total
  * must equal the PO-priced value of the billed quantities (within tolerance).
+ *
+ * The vendor invoices before the goods arrive. While a billed line is still to be received or signed off,
+ * its GRN check is not an exception yet: the match is PENDING and runs again when the GRN or sign-off lands.
  */
 export async function performThreeWayMatch(invoice: InvoiceDocument): Promise<MatchResult> {
   const po = await PurchaseOrder.findById(invoice.purchaseOrder);
@@ -63,6 +67,8 @@ export async function performThreeWayMatch(invoice: InvoiceDocument): Promise<Ma
   const cleared = await clearedQuantities([po]);
 
   const exceptions: IMatchException[] = [];
+  /** Lines billed ahead of their goods receipt or sign-off, which can still arrive */
+  let awaitingReceipt = false;
   const tolerance = env.matchPriceTolerancePct;
 
   if (!invoice.vendor.equals(po.vendor)) {
@@ -89,8 +95,11 @@ export async function performThreeWayMatch(invoice: InvoiceDocument): Promise<Ma
       });
     }
 
-    const receivedNotInvoiced = round2((cleared.get(poItem._id.toString()) ?? 0) - poItem.invoicedQty);
-    if (line.quantity > receivedNotInvoiced) {
+    const clearedQty = cleared.get(poItem._id.toString()) ?? 0;
+    const receivedNotInvoiced = round2(clearedQty - poItem.invoicedQty);
+    if (line.quantity > receivedNotInvoiced && clearedQty < poItem.quantity) {
+      awaitingReceipt = true;
+    } else if (line.quantity > receivedNotInvoiced) {
       exceptions.push({
         type: 'QTY_EXCEEDS_RECEIVED',
         poItem: poItem._id,
@@ -145,7 +154,34 @@ export async function performThreeWayMatch(invoice: InvoiceDocument): Promise<Ma
   }
 
   return {
-    status: exceptions.length === 0 ? MATCH_STATUS.MATCHED : MATCH_STATUS.EXCEPTION,
+    status: exceptions.length > 0 ? MATCH_STATUS.EXCEPTION : awaitingReceipt ? MATCH_STATUS.PENDING : MATCH_STATUS.MATCHED,
     exceptions,
   };
+}
+
+/** True when every exception has been accepted by Finance. Any new or different exception still stops the invoice. */
+export function isCleared(invoice: InvoiceDocument, result: MatchResult) {
+  if (result.status === MATCH_STATUS.MATCHED) return true;
+  if (result.status === MATCH_STATUS.PENDING) return false;
+  const accepted = invoice.exceptionDecision?.exceptionTypes ?? [];
+  return result.exceptions.every((e) => accepted.includes(e.type));
+}
+
+/** Records a match on the invoice. One still waiting for its goods stays SUBMITTED. */
+export function applyMatch(invoice: InvoiceDocument, result: MatchResult, userId: string) {
+  invoice.match = { ...result, performedBy: oid(userId), performedAt: new Date() };
+  invoice.status =
+    result.status === MATCH_STATUS.PENDING ? INVOICE_STATUS.SUBMITTED : isCleared(invoice, result) ? INVOICE_STATUS.MATCHED : INVOICE_STATUS.EXCEPTION;
+}
+
+/** Re-runs the 3-way match on a PO's open invoices, after a GRN or sign-off changes what has been received. */
+export async function rematchOpenInvoices(purchaseOrder: unknown, userId: string) {
+  const open = await Invoice.find({
+    purchaseOrder,
+    status: { $in: [INVOICE_STATUS.SUBMITTED, INVOICE_STATUS.EXCEPTION, INVOICE_STATUS.MATCHED] },
+  }).sort({ createdAt: 1 });
+  for (const invoice of open) {
+    applyMatch(invoice, await performThreeWayMatch(invoice), userId);
+    await invoice.save();
+  }
 }

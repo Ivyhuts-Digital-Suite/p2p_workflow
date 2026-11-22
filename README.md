@@ -174,12 +174,13 @@ p2p_workflow/
 - **Returns** (`POST /grn/:id/returns`, `POST /grn/returns/:id/dispatch`): the Store sends back rejected goods, for replacement or credit. Released stock can't be returned this way yet.
 - **Service and commissioning sign-off** (`POST /service-entries`, `POST /service-entries/:id/accept|reject`): the department records completed work and its HOD accepts, unless the HOD raised it. A service line becomes billable once accepted, and an equipment line once it is both accepted by the Store and commissioned.
 - The PO uses optimistic concurrency, so two GRNs posted at the same time can't over-receive it.
+- The Store records a GRN from **Purchase Orders**: a PO whose vendor has invoiced shows **Create GRN** on its own row. The form is fixed to that PO and filled in from its oldest invoice with goods still to arrive: the invoice / challan number, the boxes / cartons on the vendor's paperwork, and the received quantities. **View Invoice** on the same row shows that PO's submitted invoice(s) read only, so the Store can check the bill without the Invoices tab. Photos of the delivery can be attached (JPEG, PNG or WebP, compressed in the browser to about 4 MB in all). They are kept on the GRN and shown when it is expanded under Recent GRNs.
 
 **Module 5: 3-way match** (`/api/invoices`, Finance)
 - The PO dropdown comes from `GET /purchase-orders/invoiceable` and leaves out fully billed POs. A vendor gets only their own POs, from the moment they are issued, and the API enforces the same rule on submission. Finance can also record an invoice against an issued PO.
 - Duplicate invoice numbers from the same vendor are blocked, ignoring upper and lower case.
-- A vendor can't submit an invoice until the Store has accepted, or a sign-off has cleared, something on the billed lines. Finance can key one early, and it stops at the match.
-- The match runs automatically when an invoice is submitted, and Finance can re-run it after new GRNs. It checks every invoice line against the PO and the GRNs, using the PO prices:
+- The vendor invoices **before** the goods are received: PO issued, then vendor invoice, then Store GRN (or service sign-off), then the Finance match. A vendor submits it from **Purchase Orders**, where each PO with something left to invoice has **Submit Invoice** on its own row. The form is fixed to that PO and filled in from it, at the quantity still open to invoice.
+- The match runs automatically when an invoice is submitted. Billed lines whose goods or sign-off have not arrived yet leave it **PENDING** (status SUBMITTED, waiting at the Store), and it runs again by itself when a GRN or sign-off is recorded for that PO. It checks every invoice line against the PO and the GRNs, using the PO prices:
   - the line exists on the PO and the vendor matches;
   - billed quantity ≤ ordered quantity not yet invoiced;
   - billed quantity ≤ quantity accepted or signed off and not yet invoiced;

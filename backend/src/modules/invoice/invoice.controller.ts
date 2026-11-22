@@ -1,10 +1,10 @@
 import { FilterQuery } from 'mongoose';
 import { ROLES } from '../../constants/roles';
-import { INVOICE_STATUS, MATCH_STATUS, OVERRIDABLE_EXCEPTIONS, PO_INVOICEABLE_STATUSES, PO_STATUS } from '../../constants/status';
+import { INVOICE_STATUS, OVERRIDABLE_EXCEPTIONS, PO_INVOICEABLE_STATUSES, PO_STATUS } from '../../constants/status';
 import { currentUser } from '../../middleware/auth';
 import { IInvoice, Invoice, InvoiceDocument } from '../../models/Invoice';
 import { PurchaseOrder } from '../../models/PurchaseOrder';
-import { clearedQuantities, MatchResult, performThreeWayMatch } from '../../services/matching.service';
+import { applyMatch, isCleared, performThreeWayMatch } from '../../services/matching.service';
 import { invoicePendingAt, loadDirectory } from '../../services/workflow.service';
 import { AuthUser } from '../../types/auth';
 import { ApiError } from '../../utils/ApiError';
@@ -21,22 +21,10 @@ async function loadInvoice(id: string, user: AuthUser): Promise<InvoiceDocument>
   return invoice;
 }
 
-/** True when every exception has been accepted by Finance. Any new or different exception still stops the invoice. */
-function isCleared(invoice: InvoiceDocument, result: MatchResult) {
-  if (result.status === MATCH_STATUS.MATCHED) return true;
-  const accepted = invoice.exceptionDecision?.exceptionTypes ?? [];
-  return result.exceptions.every((e) => accepted.includes(e.type));
-}
-
-function applyMatch(invoice: InvoiceDocument, result: MatchResult, user: AuthUser) {
-  invoice.match = { ...result, performedBy: oid(user.id), performedAt: new Date() };
-  invoice.status = isCleared(invoice, result) ? INVOICE_STATUS.MATCHED : INVOICE_STATUS.EXCEPTION;
-}
-
 /**
- * Vendor (via portal) or Finance (keying a paper invoice) records an invoice against a PO.
- * Duplicates are blocked and the 3-way match runs straight away; Finance re-runs it after new GRNs.
- * A vendor cannot bill goods until the Store has accepted something on the billed lines.
+ * Vendor (via portal) or Finance (keying a paper invoice) records an invoice against a PO, as soon as the
+ * PO is issued and before the goods arrive. Duplicates are blocked and the 3-way match runs straight away:
+ * billed lines not yet received leave it PENDING, and it runs again when the GRN or sign-off is recorded.
  */
 export const submitInvoice = asyncHandler(async (req, res) => {
   const user = currentUser(req);
@@ -57,17 +45,6 @@ export const submitInvoice = asyncHandler(async (req, res) => {
     return { poItem: poItem._id, title: poItem.title, description: poItem.description, quantity: line.quantity, unitPrice: line.unitPrice, taxRate: line.taxRate };
   });
 
-  if (user.role === ROLES.VENDOR) {
-    const cleared = await clearedQuantities([po]);
-    const billable = lines.some((line: { poItem: { toString(): string } }) => {
-      const poItem = po.items.find((i) => i._id.toString() === line.poItem.toString())!;
-      return (cleared.get(poItem._id.toString()) ?? 0) > poItem.invoicedQty;
-    });
-    if (!billable) {
-      throw ApiError.unprocessable('Action locked: goods receipt or service sign-off is pending at the hospital. Please wait until completion.');
-    }
-  }
-
   const invoice = await Invoice.create({
     ...header,
     internalRef: await nextDocNumber('INV'),
@@ -77,7 +54,7 @@ export const submitInvoice = asyncHandler(async (req, res) => {
     submittedBy: user.id,
   });
 
-  applyMatch(invoice, await performThreeWayMatch(invoice), user);
+  applyMatch(invoice, await performThreeWayMatch(invoice), user.id);
   await invoice.save();
   res.status(201).json(invoice);
 });
@@ -113,7 +90,7 @@ export const matchInvoice = asyncHandler(async (req, res) => {
     throw ApiError.unprocessable(`Invoice is ${invoice.status}`);
   }
 
-  applyMatch(invoice, await performThreeWayMatch(invoice), user);
+  applyMatch(invoice, await performThreeWayMatch(invoice), user.id);
   await invoice.save();
   res.json(invoice);
 });
@@ -193,7 +170,7 @@ export const decideException = asyncHandler(async (req, res) => {
     decidedBy: oid(user.id),
     decidedAt: new Date(),
   };
-  applyMatch(invoice, result, user);
+  applyMatch(invoice, result, user.id);
   await invoice.save();
   res.json(invoice);
 });

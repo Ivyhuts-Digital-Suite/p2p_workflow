@@ -14,7 +14,8 @@ export function createApp() {
   app.use(cors({ origin: env.clientOrigin, credentials: true }));
   app.use(
     express.json({
-      limit: '1mb',
+      // Room for GRN photos, which the browser compresses to about 4 MB in all before sending.
+      limit: '6mb',
       // The bank's webhook signature covers the exact bytes it sent, so keep them.
       verify: (req, _res, buffer) => {
         (req as typeof req & { rawBody?: Buffer }).rawBody = buffer;

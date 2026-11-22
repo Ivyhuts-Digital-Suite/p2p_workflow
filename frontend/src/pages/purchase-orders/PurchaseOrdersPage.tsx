@@ -1,6 +1,6 @@
 import { Fragment, useState } from 'react';
 import { poApi } from '../../api/services';
-import { askReason } from '../../components/overlays';
+import { askReason, Modal } from '../../components/overlays';
 import { LockBanner, PriceBreakdown } from '../../components/Workflow';
 import { Empty, ErrorBanner, Page, StatusBadge } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
@@ -8,6 +8,9 @@ import { useAction, useApi } from '../../hooks/useApi';
 import type { PurchaseOrder } from '../../types';
 import { ITEM_TYPE_LABELS } from '../../types';
 import { formatDate, formatDateTime, formatMoney, productName } from '../../utils/format';
+import { ReceiveGoodsForm } from '../grn/ReceiveGoodsForm';
+import { SubmitInvoiceForm } from '../invoices/SubmitInvoiceForm';
+import { InvoicePreview } from './InvoicePreview';
 
 export function PurchaseOrdersPage() {
   const { user, hasRole } = useAuth();
@@ -15,6 +18,10 @@ export function PurchaseOrdersPage() {
   const [search, setSearch] = useState('');
   const [myQueue, setMyQueue] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
+  // Each popup belongs to the one PO whose row opened it.
+  const [invoicing, setInvoicing] = useState<string | null>(null);
+  const [receiving, setReceiving] = useState<PurchaseOrder | null>(null);
+  const [viewingInvoice, setViewingInvoice] = useState<PurchaseOrder | null>(null);
   const { data, error, reload } = useApi(
     () => poApi.list({ view, ...(myQueue ? { pendingMyApproval: 'true' } : {}) }),
     [view, myQueue],
@@ -84,6 +91,27 @@ export function PurchaseOrdersPage() {
           </button>,
         );
     }
+    if (user?.role === 'VENDOR' && po.canInvoice) {
+      out.push(
+        <button key="inv" className="btn btn-sm btn-primary" disabled={action.busy} onClick={() => setInvoicing(po._id)}>
+          Submit Invoice
+        </button>,
+      );
+    }
+    if (user?.role === 'STORE' && po.invoiceToReceive) {
+      out.push(
+        <button key="grn" className="btn btn-sm btn-primary" disabled={action.busy} onClick={() => setReceiving(po)}>
+          Create GRN
+        </button>,
+      );
+    }
+    if (user?.role === 'STORE' && po.invoices?.length) {
+      out.push(
+        <button key="view-invoice" className="btn btn-sm" onClick={() => setViewingInvoice(po)}>
+          View Invoice
+        </button>,
+      );
+    }
     return out;
   };
 
@@ -121,6 +149,36 @@ export function PurchaseOrdersPage() {
         ))}
       </div>
       <ErrorBanner message={error ?? action.error} onClose={action.clearError} />
+      {invoicing && (
+        <Modal title={`Submit invoice for ${data?.find((p) => p._id === invoicing)?.poNumber ?? 'PO'}`} onClose={() => setInvoicing(null)} extraWide dismissible={false}>
+          <SubmitInvoiceForm
+            purchaseOrderId={invoicing}
+            onCancel={() => setInvoicing(null)}
+            onSubmitted={async () => {
+              setInvoicing(null);
+              await Promise.all([reload(), summary.reload()]);
+            }}
+          />
+        </Modal>
+      )}
+      {receiving?.invoiceToReceive && (
+        <Modal title={`Physical inspection & receipt: ${receiving.poNumber}`} onClose={() => setReceiving(null)} extraWide dismissible={false}>
+          <ReceiveGoodsForm
+            po={receiving}
+            invoice={receiving.invoiceToReceive}
+            onCancel={() => setReceiving(null)}
+            onDone={async () => {
+              setReceiving(null);
+              await Promise.all([reload(), summary.reload()]);
+            }}
+          />
+        </Modal>
+      )}
+      {viewingInvoice && (
+        <Modal title={`Vendor invoice: ${viewingInvoice.poNumber}`} onClose={() => setViewingInvoice(null)} extraWide>
+          <InvoicePreview po={viewingInvoice} onClose={() => setViewingInvoice(null)} />
+        </Modal>
+      )}
       {!rows?.length ? (
         <Empty>{view === 'past' ? 'No past purchase orders.' : 'No purchase orders.'}</Empty>
       ) : (

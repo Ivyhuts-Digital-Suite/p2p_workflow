@@ -7,6 +7,7 @@ import { GoodsReceipt, IGoodsReceipt } from '../../models/GoodsReceipt';
 import { InventoryItem } from '../../models/InventoryItem';
 import { PurchaseOrder } from '../../models/PurchaseOrder';
 import { IReturnNote, ReturnNote } from '../../models/ReturnNote';
+import { rematchOpenInvoices } from '../../services/matching.service';
 import { refreshReceiptStatus } from '../../services/purchaseOrder.service';
 import { ApiError } from '../../utils/ApiError';
 import { asyncHandler } from '../../utils/asyncHandler';
@@ -55,7 +56,7 @@ function assertTraceable(line: GrnLineInput, description: string, itemType: stri
  */
 export const createGrn = asyncHandler(async (req, res) => {
   const user = currentUser(req);
-  const { purchaseOrderId, warehouse, deliveryNoteNumber, physicalCheck, qcRemarks } = req.body;
+  const { purchaseOrderId, warehouse, deliveryNoteNumber, physicalCheck, qcRemarks, photos } = req.body;
   const lines: GrnLineInput[] = req.body.items;
 
   const po = await PurchaseOrder.findById(purchaseOrderId);
@@ -130,6 +131,7 @@ export const createGrn = asyncHandler(async (req, res) => {
     deliveryNoteNumber,
     physicalCheck,
     qcRemarks,
+    photos,
     items,
     status,
     receivedBy: user.id,
@@ -159,6 +161,8 @@ export const createGrn = asyncHandler(async (req, res) => {
     );
   }
 
+  // The vendor's invoice usually came first: match it now that the goods are in.
+  await rematchOpenInvoices(po._id, user.id);
   res.status(201).json(grn);
 });
 

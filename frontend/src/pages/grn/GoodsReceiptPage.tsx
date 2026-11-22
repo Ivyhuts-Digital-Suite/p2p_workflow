@@ -1,28 +1,11 @@
-import { Fragment, FormEvent, useMemo, useState } from 'react';
-import { grnApi, poApi } from '../../api/services';
+import { Fragment, FormEvent, useState } from 'react';
+import { grnApi } from '../../api/services';
 import { askReason, Modal } from '../../components/overlays';
 import { Card, Empty, ErrorBanner, Page, StatusBadge } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
 import type { GoodsReceipt } from '../../types';
-import { BATCH_TRACKED, ITEM_TYPE_LABELS, SERIAL_TRACKED } from '../../types';
-import { formatDate, grnPoLabel, productName } from '../../utils/format';
-
-interface LineInput {
-  receivedQty: number;
-  acceptedQty: number;
-  qualityStatus: string;
-  rejectionReason: string;
-  shortageReason: string;
-  batchNumber: string;
-  expiryDate: string;
-  serials: string;
-}
-
-const RECEIVABLE = ['ISSUED', 'ACKNOWLEDGED', 'PARTIALLY_RECEIVED'];
-const EMPTY_LINE: LineInput = { receivedQty: 0, acceptedQty: 0, qualityStatus: 'PASSED', rejectionReason: '', shortageReason: '', batchNumber: '', expiryDate: '', serials: '' };
-const isSerialised = (type?: string) => SERIAL_TRACKED.includes(type ?? '');
-const today = () => new Date().toISOString().slice(0, 10);
+import { formatDate, productName } from '../../utils/format';
 
 function RaiseReturnDialog({ grn, line, onClose, onDone }: { grn: GoodsReceipt; line: GoodsReceipt['items'][number]; onClose: () => void; onDone: () => unknown }) {
   const open = (line.rejectedQty + (line.qcRejectedQty ?? 0)) - (line.returnedQty ?? 0);
@@ -72,231 +55,96 @@ function RaiseReturnDialog({ grn, line, onClose, onDone }: { grn: GoodsReceipt; 
   );
 }
 
+const ZOOM_STEP = 0.5;
+const ZOOM_MIN = 1;
+const ZOOM_MAX = 4;
+
+/** One GRN's photos: the selected one large, with zoom (scroll to pan when zoomed in) and switching between photos. */
+function GrnPhotoViewer({ grn, onClose }: { grn: GoodsReceipt; onClose: () => void }) {
+  const photos = grn.photos ?? [];
+  const [index, setIndex] = useState(0);
+  const [zoom, setZoom] = useState(ZOOM_MIN);
+  const show = (next: number) => {
+    setIndex((next + photos.length) % photos.length);
+    setZoom(ZOOM_MIN);
+  };
+  const zoomBy = (delta: number) => setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + delta)));
+
+  return (
+    <Modal title={`Photos: ${grn.grnNumber} · ${grn.purchaseOrder?.poNumber ?? ''}`} onClose={onClose} extraWide>
+      <div className="photo-viewer-controls">
+        <button type="button" className="btn btn-sm" onClick={() => zoomBy(-ZOOM_STEP)} disabled={zoom <= ZOOM_MIN} aria-label="Zoom out">
+          −
+        </button>
+        <span className="small">{Math.round(zoom * 100)}%</span>
+        <button type="button" className="btn btn-sm" onClick={() => zoomBy(ZOOM_STEP)} disabled={zoom >= ZOOM_MAX} aria-label="Zoom in">
+          +
+        </button>
+        <button type="button" className="btn btn-sm" onClick={() => setZoom(ZOOM_MIN)} disabled={zoom === ZOOM_MIN}>
+          Reset
+        </button>
+        {photos.length > 1 && (
+          <>
+            <div className="spacer" />
+            <button type="button" className="btn btn-sm" onClick={() => show(index - 1)}>
+              ‹ Previous
+            </button>
+            <span className="small">
+              {index + 1} of {photos.length}
+            </span>
+            <button type="button" className="btn btn-sm" onClick={() => show(index + 1)}>
+              Next ›
+            </button>
+          </>
+        )}
+      </div>
+      <div className="photo-viewer">
+        <img
+          src={photos[index]}
+          alt={`Delivery photo ${index + 1} for ${grn.grnNumber}`}
+          style={{ width: `${zoom * 100}%`, cursor: zoom > ZOOM_MIN ? 'zoom-out' : 'zoom-in' }}
+          onClick={() => setZoom((z) => (z > ZOOM_MIN ? ZOOM_MIN : 2))}
+        />
+      </div>
+      {photos.length > 1 && (
+        <div className="photo-thumbs">
+          {photos.map((src, i) => (
+            <button key={i} type="button" className={`photo-thumb-pick${i === index ? ' active' : ''}`} onClick={() => show(i)} aria-label={`Show photo ${i + 1}`}>
+              <img src={src} alt="" />
+            </button>
+          ))}
+        </div>
+      )}
+      <div className="form-footer">
+        <div className="spacer" />
+        <button type="button" className="btn" onClick={onClose}>
+          Close
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export function GoodsReceiptPage() {
   const { hasRole } = useAuth();
   const canReceive = hasRole('STORE');
-  const pos = useApi(() => poApi.list());
   const grns = useApi(() => grnApi.list());
   const inventory = useApi(() => grnApi.inventory());
   const nearExpiry = useApi(() => grnApi.nearExpiry());
   const returns = useApi(() => grnApi.returns());
-  const [poId, setPoId] = useState('');
-  const [warehouse, setWarehouse] = useState('MAIN-WH');
-  const [deliveryNote, setDeliveryNote] = useState('');
-  const [boxesExpected, setBoxesExpected] = useState(0);
-  const [boxesCounted, setBoxesCounted] = useState(0);
-  const [remarks, setRemarks] = useState('');
   const [expanded, setExpanded] = useState<string | null>(null);
-  const [lines, setLines] = useState<Record<string, LineInput>>({});
-  const [receiving, setReceiving] = useState(false);
   const [returning, setReturning] = useState<{ grn: GoodsReceipt; line: GoodsReceipt['items'][number] } | null>(null);
+  // The one GRN whose row opened the photo viewer.
+  const [viewingPhotos, setViewingPhotos] = useState<GoodsReceipt | null>(null);
   const refresh = async () => {
-    await Promise.all([pos.reload(), grns.reload(), inventory.reload(), nearExpiry.reload(), returns.reload()]);
+    await Promise.all([grns.reload(), inventory.reload(), nearExpiry.reload(), returns.reload()]);
   };
-  const action = useAction(async () => {
-    setReceiving(false);
-    setPoId('');
-    setDeliveryNote('');
-    setBoxesExpected(0);
-    setBoxesCounted(0);
-    setRemarks('');
-    setLines({});
-    await refresh();
-  });
   const returnAction = useAction(refresh);
 
-  // One option per PO, by its ID; only POs the Store can receive goods against.
-  const receivable = useMemo(
-    () => [...new Map((pos.data ?? []).filter((p) => RECEIVABLE.includes(p.status) && p.items.some((i) => i.itemType !== 'SERVICE')).map((p) => [p._id, p])).values()],
-    [pos.data],
-  );
-  const po = receivable.find((p) => p._id === poId);
-  const goodsLines = po?.items.filter((i) => i.itemType !== 'SERVICE') ?? [];
-
-  const lineFor = (id: string): LineInput => lines[id] ?? EMPTY_LINE;
-  const setLine = (id: string, patch: Partial<LineInput>) => setLines((l) => ({ ...l, [id]: { ...lineFor(id), ...patch } }));
-  const boxMismatch = boxesExpected !== boxesCounted;
-
-  const onSubmit = (e: FormEvent) => {
-    e.preventDefault();
-    if (!po) return;
-    const items = goodsLines
-      .map((i) => ({ poItemId: i._id, ...lineFor(i._id) }))
-      .filter((l) => l.receivedQty > 0)
-      .map(({ serials, ...l }) => ({
-        ...l,
-        rejectionReason: l.rejectionReason || undefined,
-        shortageReason: l.shortageReason || undefined,
-        batchNumber: l.batchNumber || undefined,
-        expiryDate: l.expiryDate || undefined,
-        serialNumbers: serials.split(/[\s,]+/).filter(Boolean),
-      }));
-    void action.run(
-      () =>
-        grnApi.create({
-          purchaseOrderId: po._id,
-          warehouse,
-          deliveryNoteNumber: deliveryNote,
-          physicalCheck: { boxesExpected, boxesCounted },
-          qcRemarks: remarks || undefined,
-          items,
-        }),
-      'GRN posted. Accepted goods are now in stock.',
-    );
-  };
-
+  // Goods are received from Purchase Orders, against each PO's vendor invoice.
   return (
-    <Page
-      title="Goods Receipt (MW GRN)"
-      actions={
-        canReceive && (
-          <button className="btn btn-primary" onClick={() => setReceiving(true)}>
-            + Receive goods
-          </button>
-        )
-      }
-    >
-      <ErrorBanner message={pos.error ?? grns.error ?? action.error ?? returnAction.error} onClose={action.error ? action.clearError : returnAction.clearError} />
-      {canReceive && receiving && (
-        <Modal title="Physical inspection & receipt" onClose={() => setReceiving(false)} extraWide dismissible={false}>
-        <form className="form" onSubmit={onSubmit}>
-          <ErrorBanner message={action.error} onClose={action.clearError} />
-          <label>
-            Purchase order
-            <select value={poId} onChange={(e) => setPoId(e.target.value)} required>
-              <option value="">Select PO…</option>
-              {receivable.map((p) => (
-                <option key={p._id} value={p._id}>
-                  {grnPoLabel(p)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <div className="grid-3">
-            <label>
-              Warehouse
-              <input value={warehouse} onChange={(e) => setWarehouse(e.target.value)} required />
-            </label>
-            <label>
-              Invoice / challan # *
-              <input value={deliveryNote} onChange={(e) => setDeliveryNote(e.target.value)} required />
-            </label>
-            <label>
-              Boxes / cartons on paperwork *
-              <input type="number" min={0} step={1} value={boxesExpected} onChange={(e) => setBoxesExpected(Number(e.target.value))} required />
-            </label>
-            <label>
-              Boxes / cartons counted *
-              <input type="number" min={0} step={1} value={boxesCounted} onChange={(e) => setBoxesCounted(Number(e.target.value))} required />
-            </label>
-            <label>
-              Inspection remarks {boxMismatch && '*'}
-              <input
-                value={remarks}
-                onChange={(e) => setRemarks(e.target.value)}
-                required={boxMismatch}
-                placeholder={boxMismatch ? 'Explain the box count mismatch' : ''}
-              />
-            </label>
-          </div>
-          {po && (
-            <>
-              <table className="table">
-                <thead>
-                  <tr>
-                    <th>Item / Product Name</th>
-                    <th className="num">Ordered</th>
-                    <th className="num">Already received</th>
-                    <th>Received now</th>
-                    <th>Quality check</th>
-                    <th>Accepted</th>
-                    <th>Batch / expiry / serials</th>
-                    <th>Rejection reason</th>
-                    <th>Shortage reason</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {goodsLines.map((i) => {
-                    const l = lineFor(i._id);
-                    const shortage = l.receivedQty > 0 && l.receivedQty < i.quantity - i.receivedQty;
-                    const needsBatch = BATCH_TRACKED.includes(i.itemType ?? '') && l.acceptedQty > 0;
-                    const needsSerials = isSerialised(i.itemType) && l.acceptedQty > 0;
-                    const expired = !!l.expiryDate && l.expiryDate <= today();
-                    return (
-                      <tr key={i._id}>
-                        <td>
-                          {productName(i)}
-                          <div className="muted small">{ITEM_TYPE_LABELS[i.itemType ?? 'GOODS']}</div>
-                        </td>
-                        <td className="num">{i.quantity}</td>
-                        <td className="num">{i.receivedQty}</td>
-                        <td>
-                          <input type="number" min={0} step="any" className="narrow" value={l.receivedQty}
-                            onChange={(e) => {
-                              const qty = Number(e.target.value);
-                              setLine(i._id, { receivedQty: qty, acceptedQty: l.qualityStatus === 'PASSED' ? qty : Math.min(l.acceptedQty, qty) });
-                            }} />
-                        </td>
-                        <td>
-                          <select value={l.qualityStatus} onChange={(e) => {
-                            const qualityStatus = e.target.value;
-                            setLine(i._id, { qualityStatus, acceptedQty: qualityStatus === 'PASSED' ? l.receivedQty : 0 });
-                          }}>
-                            <option value="PASSED">Passed</option>
-                            <option value="DAMAGED">Damaged</option>
-                            <option value="QUALITY_FAILED">Quality failed</option>
-                          </select>
-                        </td>
-                        <td>
-                          <input type="number" min={0} max={l.receivedQty} step="any" className="narrow" value={l.acceptedQty}
-                            disabled={l.qualityStatus === 'PASSED'}
-                            onChange={(e) => setLine(i._id, { acceptedQty: Number(e.target.value) })} />
-                        </td>
-                        <td>
-                          {isSerialised(i.itemType) ? (
-                            <input value={l.serials} required={needsSerials} placeholder={`${l.acceptedQty} serial no(s), comma separated`} onChange={(e) => setLine(i._id, { serials: e.target.value })} />
-                          ) : (
-                            <>
-                              <input value={l.batchNumber} required={needsBatch} placeholder={BATCH_TRACKED.includes(i.itemType ?? '') ? 'Batch number *' : 'Batch number'} onChange={(e) => setLine(i._id, { batchNumber: e.target.value })} />
-                              <input type="date" value={l.expiryDate} required={needsBatch} aria-label="Expiry date" onChange={(e) => setLine(i._id, { expiryDate: e.target.value })} />
-                              {expired && l.acceptedQty > 0 && <div className="expiry-past small">Expired: reject this quantity</div>}
-                            </>
-                          )}
-                        </td>
-                        <td>
-                          <input value={l.rejectionReason} disabled={l.acceptedQty >= l.receivedQty} required={l.acceptedQty < l.receivedQty}
-                            onChange={(e) => setLine(i._id, { rejectionReason: e.target.value })} />
-                        </td>
-                        <td>
-                          <input value={l.shortageReason} disabled={!shortage} required={shortage}
-                            placeholder={shortage ? `Short by ${i.quantity - i.receivedQty - l.receivedQty}` : ''}
-                            onChange={(e) => setLine(i._id, { shortageReason: e.target.value })} />
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-              <p className="muted small">This is the quality inspection: accepted goods enter stock and can be billed, and rejected goods can be returned. Two batches of one item need two GRNs.</p>
-              <div className="form-footer">
-                <div className="spacer" />
-                <button className="btn btn-primary" disabled={action.busy}>
-                  Post MW GRN
-                </button>
-              </div>
-            </>
-          )}
-          {!po && (
-            <div className="form-footer">
-              <div className="spacer" />
-              <button type="button" className="btn btn-ghost" onClick={() => setReceiving(false)}>
-                Cancel
-              </button>
-            </div>
-          )}
-        </form>
-        </Modal>
-      )}
+    <Page title="Goods Receipt (MW GRN)">
+      <ErrorBanner message={grns.error ?? returnAction.error} onClose={returnAction.clearError} />
 
       {!!nearExpiry.data?.rows.length && (
         <Card title={`Expiring stock (within ${nearExpiry.data.days} days)`}>
@@ -345,6 +193,7 @@ export function GoodsReceiptPage() {
                   <th>Boxes</th>
                   <th>Date</th>
                   <th>Status</th>
+                  <th>Photos</th>
                 </tr>
               </thead>
               <tbody>
@@ -365,11 +214,25 @@ export function GoodsReceiptPage() {
                       <td>
                         <StatusBadge status={g.status} />
                       </td>
+                      <td>
+                        {!!g.photos?.length && (
+                          <button type="button" className="btn btn-sm" onClick={() => setViewingPhotos(g)}>
+                            View Photos ({g.photos.length})
+                          </button>
+                        )}
+                      </td>
                     </tr>
                     {expanded === g._id && (
                       <tr>
-                        <td colSpan={8}>
+                        <td colSpan={9}>
                           {g.qcRemarks && <p className="small">Remarks: {g.qcRemarks}</p>}
+                          {!!g.photos?.length && (
+                            <div className="photo-thumbs photo-thumbs-large">
+                              {g.photos.map((src, index) => (
+                                <img key={index} src={src} alt={`Delivery photo ${index + 1} for ${g.grnNumber}`} />
+                              ))}
+                            </div>
+                          )}
                           <ul className="grn-lines small">
                             {g.items.map((l) => {
                               const returnable = l.rejectedQty + (l.qcRejectedQty ?? 0) - (l.returnedQty ?? 0);
@@ -490,6 +353,7 @@ export function GoodsReceiptPage() {
         )}
       </Card>
       {returning && <RaiseReturnDialog grn={returning.grn} line={returning.line} onClose={() => setReturning(null)} onDone={refresh} />}
+      {viewingPhotos && <GrnPhotoViewer grn={viewingPhotos} onClose={() => setViewingPhotos(null)} />}
     </Page>
   );
 }

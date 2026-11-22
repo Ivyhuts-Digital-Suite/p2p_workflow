@@ -44,6 +44,20 @@ interface RawStep {
   action?: string;
   /** Set when the owner has nothing to do yet at this step: what they are waiting for ("Waiting for vendor bids") */
   waiting?: string;
+  /** A date shown with the step: when bidding ends, or when it closed */
+  deadline?: StepDeadline;
+}
+
+interface StepDeadline {
+  label: 'Ends' | 'Closed';
+  at: Date;
+}
+
+/** When bidding on an RFQ ends, or when it closed. Its closing time is the deadline, or the moment a vendor was selected early. */
+function biddingDeadline(rfq: RfqDocument | undefined): StepDeadline | undefined {
+  if (!rfq || rfq.status === RFQ_STATUS.DRAFT || !rfq.closeAt) return undefined;
+  const open = rfq.status === RFQ_STATUS.PUBLISHED && new Date() < rfq.closeAt;
+  return { label: open ? 'Ends' : 'Closed', at: rfq.closeAt };
 }
 
 export interface JourneyStep {
@@ -53,6 +67,8 @@ export interface JourneyStep {
   status: string;
   state: 'done' | 'current' | 'blocked' | 'locked';
   detail?: string;
+  /** When bidding ends, or when it closed */
+  deadline?: StepDeadline;
 }
 
 export interface JourneyTrack {
@@ -152,7 +168,7 @@ function toTrack(id: string, reference: string, title: string, raw: RawStep[], u
   const current = raw[currentIndex];
   const steps = raw.map((s, index): JourneyStep => {
     const [doneText, pendingText] = stepWords(s);
-    const shown = { label: s.label, detail: s.detail, group: s.group };
+    const shown = { label: s.label, detail: s.detail, group: s.group, deadline: s.deadline };
     if (s.done) return { ...shown, state: 'done', status: doneText };
     if (index === currentIndex) return { ...shown, state: s.blocked ? 'blocked' : 'current', status: s.blocked ?? s.note ?? pendingText };
     return { ...shown, state: 'locked', status: 'Upcoming' };
@@ -199,7 +215,8 @@ function deliveryAndPaymentSteps(po: IPurchaseOrder, records: PoRecords, at: Dir
   const all = (statuses: string[]) => invoices.length > 0 && invoices.every((i) => statuses.includes(i.status));
   const billedInFull = po.items.every((i) => i.invoicedQty >= i.quantity);
 
-  const steps: RawStep[] = [];
+  // The vendor invoices on dispatch, before the goods are received and inspected.
+  const steps: RawStep[] = [{ label: 'Invoice', kind: 'Task', done: billedInFull || invoices.length > 0, owner: at(ROLES.VENDOR) }];
   if (goods.length) {
     const received = goods.reduce((s, i) => s + i.receivedQty, 0);
     const ordered = goods.reduce((s, i) => s + i.quantity, 0);
@@ -229,7 +246,6 @@ function deliveryAndPaymentSteps(po: IPurchaseOrder, records: PoRecords, at: Dir
   const processing = records.payments.some((p) => p.status === PAYMENT_STATUS.PROCESSING);
   const nextPaymentStep = awaitingApproval?.approvals.find((a) => a.status === 'PENDING');
 
-  steps.push({ label: 'Invoice', kind: 'Task', done: billedInFull || invoices.length > 0, owner: at(ROLES.VENDOR) });
 
   // One Finance stage, from checking the invoice to paying it. Booking the liability is part of verifying the invoice.
   const finance = at(ROLES.FINANCE);
@@ -271,14 +287,13 @@ function deliveryAndPaymentSteps(po: IPurchaseOrder, records: PoRecords, at: Dir
 /** The steps after the PO, for a requisition that has none yet: shown from the start, so the whole path is visible. */
 function stepsAfterOrder(pr: IPurchaseRequisition, at: Directory): RawStep[] {
   const types = pr.items.map((i) => i.itemType);
-  const steps: RawStep[] = [];
+  const steps: RawStep[] = [{ label: 'Invoice', kind: 'Task', done: false, owner: at(ROLES.VENDOR) }];
   if (types.some((t) => t !== ITEM_TYPE.SERVICE)) steps.push({ label: 'Goods receipt & inspection', kind: 'Task', done: false, owner: at(ROLES.STORE) });
   if (types.some((t) => t === ITEM_TYPE.SERVICE || NEEDS_COMMISSIONING.includes(t))) {
     steps.push({ label: types.some((t) => NEEDS_COMMISSIONING.includes(t)) ? 'Commissioning sign-off' : 'Service sign-off', kind: 'Approval', done: false, owner: at(ROLES.HOD, pr.department) });
   }
   const finance = at(ROLES.FINANCE);
   steps.push(
-    { label: 'Invoice', kind: 'Task', done: false, owner: at(ROLES.VENDOR) },
     { group: FINANCE_STAGE, label: 'Invoice verification & 3-way match', kind: 'Process', done: false, owner: finance },
     { group: FINANCE_STAGE, label: 'Tax verification', kind: 'Approval', done: false, owner: finance },
     { group: FINANCE_STAGE, label: 'Payment release', kind: 'Process', done: false, owner: finance },
@@ -330,7 +345,7 @@ function sourcingSteps(rfq: RfqDocument | undefined, at: Directory, emergency: b
   const closed = !!rfq && ([RFQ_STATUS.CLOSED, RFQ_STATUS.AWARDED] as string[]).includes(rfq.status);
   const steps: RawStep[] = [
     { label: 'RFQ published', kind: 'Task', done: !!rfq && rfq.status !== RFQ_STATUS.DRAFT, owner: procurement, action: rfq ? 'Publish RFQ' : 'Initiate RFQ' },
-    { label: 'Bidding', kind: 'Process', done: closed, owner: procurement, detail: rfq ? rfq.rfqNumber : undefined, ...biddingWords(rfq, bids) },
+    { label: 'Bidding', kind: 'Process', done: closed, owner: procurement, detail: rfq ? rfq.rfqNumber : undefined, deadline: biddingDeadline(rfq), ...biddingWords(rfq, bids) },
   ];
   const escalation = rfq?.budgetEscalation?.status === 'PENDING';
   steps.push({
@@ -527,7 +542,7 @@ async function vendorTracks(user: AuthUser): Promise<JourneyTrack[]> {
     const steps: RawStep[] = [
       { label: 'RFQ received', kind: 'Task', done: true },
       { label: withdrawn ? 'Bid withdrawn' : 'Bid submitted', kind: 'Task', done: !!bid, owner: at(ROLES.VENDOR) },
-      { label: 'Bidding closed', kind: 'Process', done: !open, note: 'Bidding is open. You can revise your bid until it closes.' },
+      { label: 'Bidding closed', kind: 'Process', done: !open, note: 'Bidding is open. You can revise your bid until it closes.', deadline: biddingDeadline(rfq) },
     ];
     if (!won) {
       tracks.push({ ...toTrack(key, rfq.rfqNumber, rfq.title, steps, user, 'Bidding has closed. The buyer contacts the selected vendor directly.', createdAt(rfq), rfq.description), rfqId: key });

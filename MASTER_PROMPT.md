@@ -461,3 +461,61 @@ Build the project for Vercel and list the environment variables it needs.
   - Older RFQs and bids still returned the removed two-envelope fields (`technicalEvaluation`, `financialsOpenedAt/By`, `technicalStatus`, `technicalRemarks`, `technicalReviewed*`). They are now cleared at startup.
   - The PR detail view still keyed its "the vendor can read this conversation" notice on "PO generated". It now uses "Vendor selected", like the journey card.
   - Production occasionally answered the first request after an idle spell with 503 "database temporarily unavailable". A new Vercel instance connects to Atlas on its first request and had only 5s to do it. Now an instance's first connection waits up to 10s and is tried twice, with concurrent requests sharing each attempt. After that, every attempt is one ordinary 5s try, so requests still fail fast during a real outage. Local development is unchanged.
+
+## Phase 35: Vendor invoice before the GRN, per-PO Submit Invoice and Create GRN, GRN photos (22 Nov)
+
+**Constraints**
+- No extra features or UI beyond the request. Do not change unrelated pages. Leave the changes uncommitted.
+- Strict per-PO isolation: each row's Submit Invoice or Create GRN is bound to its own PO (and, for the Store, that PO's own vendor invoice). It never mixes data with another PO.
+
+**Changes**
+1. **New order:** PO generated and issued → **vendor invoice** → Store GRN & inspection (or service sign-off) → Finance invoice verification & 3-way match → tax verification → payment release.
+   - Remove the rule that blocked a vendor from invoicing before a GRN or sign-off.
+   - An invoice ahead of its goods is SUBMITTED with match PENDING (waiting at the Store), not an exception.
+   - The match re-runs automatically when a GRN or sign-off is recorded.
+   - The journey for every role, and the dashboard's Procure-to-Pay flow bar, follow the new order.
+2. **Vendor:**
+   - "Your action: Submit invoice" → Go to task opens `/purchase-orders`.
+   - Each PO with something left to invoice has **Submit Invoice** on its row. It opens the invoice popup fixed to that PO and filled in from it: PO, vendor, lines and quantities open to invoice, prices, GST and totals. The vendor enters only the invoice number (and date).
+   - Remove **+ Submit invoice** from the vendor's `/invoices`; Finance keeps it for paper invoices.
+3. **Store:**
+   - "Your action: Record GRN" → Go to task opens `/purchase-orders`.
+   - Each PO whose vendor has invoiced has **Create GRN** on its row. It opens the GRN popup fixed to that PO and filled in from its oldest invoice with goods still to arrive: PO, vendor, invoice / challan number, and received quantities. Inspection fields stay editable.
+   - **Attach Photo**, before the submit button: JPEG, PNG or WebP, one or more, with thumbnails and ×. Photos are compressed in the browser (about 4 MB in all, inside Vercel's request limit), stored on the GRN, and shown in the expanded GRN under Recent GRNs.
+   - Remove only **+ Receive goods** from `/grn`; everything else there is unchanged.
+4. Update the tests (journey order, early invoices waiting and re-matching, two-PO isolation, photos). Run `npm run typecheck`, `npm run test:e2e` and `npm run build`.
+
+**Decisions confirmed before building**
+- Finance keeps its own Submit invoice.
+- There is no backend block on a GRN before the invoice; the Create GRN button appears only once the PO has an invoice.
+- Quantities stay editable for partial dispatches and short deliveries.
+- Photos show on `/grn` only (Store, Auditor, Admin).
+- Service-only POs go Invoice → HOD service sign-off.
+
+## Phase 36: Bidding end/close date, boxes on the vendor invoice, Store's View Invoice (22 Nov)
+
+**Constraints**
+- Nothing beyond the request; no unrelated pages. Leave the changes uncommitted.
+- Strict per-PO isolation: boxes and View Invoice come only from each PO's own invoice.
+
+**Changes**
+1. **Bidding date on the journey (all roles):**
+   - The Bidding step shows the RFQ number and the bidding date: "RFQ-… · Ends 22 Nov 2026" while open, "· Closed 22 Nov 2026" once closed.
+   - The date is the RFQ's closing time: the deadline, or the moment a vendor was selected early. A manual close keeps the scheduled date.
+   - The vendor's "Bidding closed" step shows the same date.
+2. **Boxes / cartons on paperwork:**
+   - A whole-number field (0 or more, default 0) on the vendor's Submit Invoice popup, saved on the invoice.
+   - The Store's Create GRN popup fills "Boxes / cartons on paperwork" from that PO's invoice. "Boxes / cartons counted" stays the Store's own count.
+3. **View Invoice (Store, `/purchase-orders`):**
+   - On every PO with a submitted vendor invoice, both while its GRN is pending and after it, a **View Invoice** button opens a read-only bill for that PO's own invoice(s).
+   - The bill shows: invoice reference, vendor invoice / challan #, date, status, PO #, vendor and contact, boxes on paperwork, and the item lines (name, quantity, unit price, GST %, line total), with subtotal, total tax and grand total.
+   - The data comes with the PO row, for the Store only. The Store still has no Invoices tab.
+4. Update the tests, run `npm run typecheck` and `npm run test:e2e`. No browser walkthrough.
+
+## Phase 37: View Photos (N) on Recent GRNs, with a zoomable viewer; commit and push (22 Nov)
+
+- On `/grn` Recent GRNs, each GRN with photos shows **View Photos (N)** on its own row. A GRN without photos leaves that cell empty.
+- The button opens a popup for that GRN only, titled `Photos: <GRN #> · <PO #>`, with a Close button. It shows the selected photo large, with zoom in, zoom out and reset; clicking the image toggles zoom, and you scroll to pan when zoomed in. With several photos, Previous/Next and thumbnails switch between them.
+- The GRN # expand stays as it was.
+- Run the typecheck, end-to-end tests and build, then commit all accumulated changes (Phases 35–37) and push to `main`.
+

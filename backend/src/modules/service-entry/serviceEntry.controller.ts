@@ -5,6 +5,7 @@ import { ITEM_TYPE, NEEDS_COMMISSIONING, PO_STATUS, SERVICE_ENTRY_STATUS } from 
 import { currentUser } from '../../middleware/auth';
 import { PurchaseOrder } from '../../models/PurchaseOrder';
 import { IServiceEntry, ServiceEntry } from '../../models/ServiceEntry';
+import { rematchOpenInvoices } from '../../services/matching.service';
 import { refreshReceiptStatus, updatePurchaseOrder } from '../../services/purchaseOrder.service';
 import { AuthUser } from '../../types/auth';
 import { ApiError } from '../../utils/ApiError';
@@ -94,9 +95,10 @@ async function claimDecision(req: Request, user: AuthUser, status: string) {
   return decided;
 }
 
-/** Acceptance is what makes the work billable. */
+/** Acceptance is what makes the work billable; an invoice already submitted is matched again. */
 export const acceptServiceEntry = asyncHandler(async (req, res) => {
-  const entry = await claimDecision(req, currentUser(req), SERVICE_ENTRY_STATUS.ACCEPTED);
+  const user = currentUser(req);
+  const entry = await claimDecision(req, user, SERVICE_ENTRY_STATUS.ACCEPTED);
   await updatePurchaseOrder(entry.purchaseOrder, (po) => {
     const line = po.items.find((i) => i._id.equals(entry.poItem));
     if (!line) return;
@@ -107,6 +109,7 @@ export const acceptServiceEntry = asyncHandler(async (req, res) => {
       line.commissionedQty = round2(line.commissionedQty + entry.quantity);
     }
   });
+  await rematchOpenInvoices(entry.purchaseOrder, user.id);
   res.json(entry);
 });
 

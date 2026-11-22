@@ -1,7 +1,7 @@
 import { FormEvent, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { invoiceApi, poApi } from '../../api/services';
-import { LockBanner, PriceBreakdown } from '../../components/Workflow';
+import { PriceBreakdown } from '../../components/Workflow';
 import { ErrorBanner } from '../../components/ui';
 import { useAuth } from '../../context/AuthContext';
 import { useAction, useApi } from '../../hooks/useApi';
@@ -13,14 +13,20 @@ interface Line {
   taxRate: number;
 }
 
-export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () => unknown; onCancel: () => void }) {
+/**
+ * Records a vendor invoice. Given a `purchaseOrderId` (from that PO's row) the form is fixed to that PO and
+ * filled in from it: every line at the quantity still open to invoice, at the PO price and GST.
+ */
+export function SubmitInvoiceForm({ onSubmitted, onCancel, purchaseOrderId }: { onSubmitted: () => unknown; onCancel: () => void; purchaseOrderId?: string }) {
   const { user } = useAuth();
   const isVendor = user?.role === 'VENDOR';
   // The server decides what can be invoiced: for a vendor, only their own accepted POs with something left to bill.
   const pos = useApi(() => poApi.invoiceable());
-  const [poId, setPoId] = useState('');
+  const [poId, setPoId] = useState(purchaseOrderId ?? '');
+  const locked = !!purchaseOrderId;
   const [invoiceNumber, setInvoiceNumber] = useState('');
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
+  const [boxesOnPaperwork, setBoxesOnPaperwork] = useState(0);
   const [lines, setLines] = useState<Record<string, Line>>({});
   const [claimedTotal, setClaimedTotal] = useState<number | ''>('');
   const action = useAction(onSubmitted);
@@ -28,7 +34,7 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
   const po = pos.data?.find((p) => p._id === poId);
   const lineFor = (id: string): Line => {
     const poItem = po?.items.find((i) => i._id === id);
-    return lines[id] ?? { quantity: 0, unitPrice: poItem?.unitPrice ?? 0, taxRate: poItem?.taxRate ?? 18 };
+    return lines[id] ?? { quantity: locked ? poItem?.openToInvoiceQty ?? 0 : 0, unitPrice: poItem?.unitPrice ?? 0, taxRate: poItem?.taxRate ?? 18 };
   };
   const setLine = (id: string, patch: Partial<Line>) => setLines((l) => ({ ...l, [id]: { ...lineFor(id), ...patch } }));
 
@@ -36,8 +42,6 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
   const tax = po?.items.reduce((sum, i) => sum + (lineFor(i._id).quantity * lineFor(i._id).unitPrice * lineFor(i._id).taxRate) / 100, 0) ?? 0;
   const computed = actual + tax;
 
-  const openToBill = (i: { clearedQty?: number; invoicedQty: number }) => Math.max((i.clearedQty ?? 0) - i.invoicedQty, 0);
-  const nothingCleared = !!po && po.items.every((i) => openToBill(i) <= 0);
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault();
@@ -50,6 +54,7 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
           invoiceNumber,
           invoiceDate,
           claimedTotal: claimedTotal === '' ? Math.round(computed * 100) / 100 : claimedTotal,
+          boxesOnPaperwork,
           items,
         }),
       'Invoice submitted',
@@ -59,17 +64,30 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
   return (
     <form className="form" onSubmit={onSubmit}>
       <ErrorBanner message={pos.error ?? action.error} onClose={action.clearError} />
-      <label>
-        Purchase order
-        <select value={poId} onChange={(e) => { setPoId(e.target.value); setLines({}); }} required>
-          <option value="">{pos.loading ? 'Loading POs…' : 'Select PO…'}</option>
-          {pos.data?.map((p) => (
-            <option key={p._id} value={p._id}>
-              {poLabel(p)}
-            </option>
-          ))}
-        </select>
-      </label>
+      {locked ? (
+        <div className="grid-2">
+          <label>
+            Purchase order
+            <input value={po ? poLabel(po) : pos.loading ? 'Loading…' : ''} readOnly />
+          </label>
+          <label>
+            Vendor
+            <input value={po?.vendor?.companyName ?? ''} readOnly />
+          </label>
+        </div>
+      ) : (
+        <label>
+          Purchase order
+          <select value={poId} onChange={(e) => { setPoId(e.target.value); setLines({}); }} required>
+            <option value="">{pos.loading ? 'Loading POs…' : 'Select PO…'}</option>
+            {pos.data?.map((p) => (
+              <option key={p._id} value={p._id}>
+                {poLabel(p)}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <div className="grid-2">
         <label>
           Invoice number
@@ -79,8 +97,13 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
           Invoice date
           <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} required />
         </label>
+        <label>
+          Boxes / cartons on paperwork
+          <input type="number" min={0} step={1} value={boxesOnPaperwork} onChange={(e) => setBoxesOnPaperwork(Number(e.target.value))} />
+        </label>
       </div>
-      {pos.data?.length === 0 && (
+      {locked && pos.data && !po && <div className="alert alert-info">This purchase order has nothing left to invoice.</div>}
+      {!locked && pos.data?.length === 0 && (
         <div className="alert alert-info">
           {isVendor ? (
             <span>
@@ -92,15 +115,6 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
           )}
         </div>
       )}
-      {po && nothingCleared && (
-        <LockBanner
-          message={
-            isVendor
-              ? 'Action locked: goods receipt or service sign-off is pending at the hospital. Please wait until completion.'
-              : 'Nothing on this PO has been accepted or signed off yet, so an invoice keyed now stops at the match until it does.'
-          }
-        />
-      )}
       {po && (
         <>
           <table className="table">
@@ -108,7 +122,7 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
               <tr>
                 <th>PO line</th>
                 <th className="num">Ordered</th>
-                <th className="num">Cleared to bill</th>
+                <th className="num">Open to invoice</th>
                 <th>Qty billed</th>
                 <th>Unit price</th>
                 <th>GST %</th>
@@ -126,7 +140,7 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
                       {productName(i)}
                     </td>
                     <td className="num">{i.quantity}</td>
-                    <td className="num">{openToBill(i)}</td>
+                    <td className="num">{i.openToInvoiceQty ?? 0}</td>
                     <td>
                       <input type="number" min={0} step="any" className="narrow" value={l.quantity} onChange={(e) => setLine(i._id, { quantity: Number(e.target.value) })} />
                     </td>
@@ -154,7 +168,7 @@ export function SubmitInvoiceForm({ onSubmitted, onCancel }: { onSubmitted: () =
             <button type="button" className="btn btn-ghost" onClick={onCancel}>
               Cancel
             </button>
-            <button className="btn btn-primary" disabled={action.busy || (isVendor && nothingCleared)}>
+            <button className="btn btn-primary" disabled={action.busy}>
               Submit invoice
             </button>
           </div>

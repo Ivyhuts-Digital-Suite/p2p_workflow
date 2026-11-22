@@ -282,7 +282,9 @@ async function main() {
   check('the final HOD approval issues the PO automatically', hodPoApproval.status === 200 && hodPoApproval.body.status === 'ISSUED' && !!hodPoApproval.body.issuedAt, hodPoApproval.body);
   check('the old issue step is not needed', (await call('POST', `/purchase-orders/${po._id}/issue`, t.procurement)).status === 422);
   const afterPoTrack = (await call('GET', `/requisitions/${pr._id}/journey`, t.admin)).body;
-  check('after the PO, the journey goes straight to the Store', afterPoTrack.steps.find((s: { state: string }) => s.state === 'current')?.label === 'Goods receipt & inspection', afterPoTrack.steps);
+  check('after the PO, the vendor invoice comes first', afterPoTrack.steps.find((s: { state: string }) => s.state === 'current')?.label === 'Invoice', afterPoTrack.steps);
+  const pathLabels = (afterPoTrack.steps as { label: string }[]).map((s) => s.label);
+  check('the path runs PO, vendor invoice, GRN, then the Finance match', pathLabels.indexOf('PO generated') < pathLabels.indexOf('Invoice') && pathLabels.indexOf('Invoice') < pathLabels.indexOf('Goods receipt & inspection') && pathLabels.indexOf('Goods receipt & inspection') < pathLabels.indexOf('Invoice verification & 3-way match'), pathLabels);
   const winnerAfterIssue = await vendorRfqRead(t.vendor1);
   check('winning vendor gets the PO reference once issued', winnerAfterIssue.row.purchaseOrder?.poNumber === po.poNumber && winnerAfterIssue.detail.purchaseOrder?.poNumber === po.poNumber, winnerAfterIssue.row);
   check('losing vendor still reads the same after the PO is issued', JSON.stringify(await vendorRfqRead(t.vendor2)) === JSON.stringify(loserBeforeAward));
@@ -308,7 +310,10 @@ async function main() {
   check('roles without invoicing are refused the dropdown', (await call('GET', '/purchase-orders/invoiceable', t.store)).status === 403);
 
   // ---- Stage 3: warehouse GRN -----------------------------------------------------------
-  check('goods not yet received cannot be billed', (await call('POST', '/invoices', t.vendor1, { ...earlyInvoice, invoiceNumber: 'GRN-WAIT' })).status === 422);
+  const grnWait = await call('POST', '/invoices', t.vendor1, { ...earlyInvoice, invoiceNumber: 'GRN-WAIT' });
+  check('an invoice without boxes on paperwork records 0', grnWait.body.boxesOnPaperwork === 0, grnWait.body.boxesOnPaperwork);
+  check('the vendor can invoice before the goods arrive; the match waits for the GRN', grnWait.status === 201 && grnWait.body.status === 'SUBMITTED' && grnWait.body.match.status === 'PENDING' && grnWait.body.match.exceptions.length === 0, grnWait.body);
+  await call('POST', `/invoices/${grnWait.body._id}/reject`, t.finance, { reason: 'Test of an early invoice' });
   const grnBody = (over: object) => ({
     purchaseOrderId: po._id, warehouse: 'MAIN-WH', deliveryNoteNumber: 'CH-100', physicalCheck: { boxesExpected: 10, boxesCounted: 10 },
     items: [{ poItemId, receivedQty: 8, acceptedQty: 7, qualityStatus: 'DAMAGED', rejectionReason: 'Cracked screen', shortageReason: 'Balance to follow' }],
@@ -499,9 +504,11 @@ async function main() {
   check('expired goods are refused at receipt', expired.status === 422 && /expired/.test(expired.body.message), expired.body);
   const rejectedExpired = await call('POST', '/grn', t.store, grnFor(drug.po, { receivedQty: 2, acceptedQty: 0, qualityStatus: 'QUALITY_FAILED', rejectionReason: 'Expired on arrival', shortageReason: 'Balance to follow', batchNumber: 'B-OLD', expiryDate: days(-1) }));
   check('expired goods can still be recorded as rejected', rejectedExpired.status === 201 && rejectedExpired.body.status === 'REJECTED', rejectedExpired.body);
-  check('nothing can be billed before receipt', (await call('POST', '/invoices', t.vendor1, billOf(drug.po, 'GL-EARLY', 8))).status === 422);
+  const vendorEarly = await call('POST', '/invoices', t.vendor1, billOf(drug.po, 'GL-EARLY', 8));
+  check('a vendor bills before receipt and the match waits', vendorEarly.status === 201 && vendorEarly.body.status === 'SUBMITTED' && vendorEarly.body.match.status === 'PENDING', vendorEarly.body);
+  await call('POST', `/invoices/${vendorEarly.body._id}/reject`, t.finance, { reason: 'Test of an early invoice' });
   const earlyAp = await call('POST', '/invoices', t.finance, billOf(drug.po, 'GL-EARLY-AP', 8));
-  check('an invoice Finance keys early stops at the match', earlyAp.status === 201 && earlyAp.body.status === 'EXCEPTION' && earlyAp.body.match.exceptions.some((e: any) => e.type === 'QTY_EXCEEDS_RECEIVED'), earlyAp.body.match);
+  check('an invoice Finance keys early waits for the goods too', earlyAp.status === 201 && earlyAp.body.status === 'SUBMITTED' && earlyAp.body.match.status === 'PENDING', earlyAp.body.match);
   await call('POST', `/invoices/${earlyAp.body._id}/reject`, t.finance, { reason: 'Keyed too early' });
   const drugGrn = await call('POST', '/grn', t.store, grnFor(drug.po, { receivedQty: 8, acceptedQty: 6, qualityStatus: 'QUALITY_FAILED', rejectionReason: '2 units leaking', batchNumber: 'B-100', expiryDate: days(30), shortageReason: 'Balance to follow' }));
   check('GRN stores batch, expiry and the quality result', drugGrn.status === 201 && drugGrn.body.items[0].batchNumber === 'B-100' && !!drugGrn.body.items[0].expiryDate && drugGrn.body.items[0].rejectedQty === 2, drugGrn.body);
@@ -516,7 +523,7 @@ async function main() {
   const invoiceableDrug = ((await call('GET', '/purchase-orders/invoiceable', t.vendor1)).body as any[]).find((p) => p._id === drug.po._id);
   check('invoice dropdown shows the quantity accepted', invoiceableDrug.items[0].clearedQty === 6, invoiceableDrug.items[0]);
   const overQc = await call('POST', '/invoices', t.vendor1, billOf(drug.po, 'GL-OVERQC', 7));
-  check('billing beyond what was accepted is an exception', overQc.body.status === 'EXCEPTION', overQc.body.match);
+  check('billing beyond what was accepted waits for the rest of the goods', overQc.body.status === 'SUBMITTED' && overQc.body.match.status === 'PENDING', overQc.body.match);
   await call('POST', `/invoices/${overQc.body._id}/reject`, t.finance, { reason: 'Over the accepted quantity' });
   check('a second delivery can be rejected in full', (await call('POST', '/grn', t.store, grnFor(drug.po, { receivedQty: 4, acceptedQty: 0, qualityStatus: 'DAMAGED', rejectionReason: 'Crushed', batchNumber: 'B-101', expiryDate: days(10) }, 'CH-GL2'))).status === 201);
 
@@ -572,8 +579,13 @@ async function main() {
   const accepted = await call('POST', `/invoices/${priceyInvoice.body._id}/exception-decision`, t.finance, { decision: 'ACCEPT', reason: 'Vendor passed on a freight surcharge' });
   check('Finance accepts a price variance and the invoice moves on', accepted.status === 200 && accepted.body.status === 'MATCHED' && accepted.body.exceptionDecision.exceptionTypes.includes('PRICE_VARIANCE'), accepted.body);
   check('an accepted invoice can be booked', (await call('POST', `/invoices/${priceyInvoice.body._id}/book`, t.finance, { glAccount: '5000' })).status === 200);
-  const qtyException = await call('POST', '/invoices', t.finance, billOf((await acceptedPo('Syringe box', 'GOODS', 2, 100)).po, 'GL-QTY', 2));
-  check('Finance can never accept billing for goods not received', qtyException.body.status === 'EXCEPTION' && (await call('POST', `/invoices/${qtyException.body._id}/exception-decision`, t.finance, { decision: 'ACCEPT', reason: 'Please let this one through' })).status === 422);
+  // Billing again for goods already received and billed is a real exception, never overridable.
+  const syringes = (await acceptedPo('Syringe box', 'GOODS', 2, 100)).po;
+  await call('POST', '/grn', t.store, grnFor(syringes, { receivedQty: 2, acceptedQty: 2 }));
+  const firstBill = await call('POST', '/invoices', t.finance, billOf(syringes, 'GL-QTY-A', 2));
+  await call('POST', `/invoices/${firstBill.body._id}/book`, t.finance, { glAccount: '5000' });
+  const qtyException = await call('POST', '/invoices', t.finance, billOf(syringes, 'GL-QTY', 1));
+  check('Finance can never accept billing for goods not received', qtyException.body.status === 'EXCEPTION' && qtyException.body.match.exceptions.some((e: any) => e.type === 'QTY_EXCEEDS_RECEIVED') && (await call('POST', `/invoices/${qtyException.body._id}/exception-decision`, t.finance, { decision: 'ACCEPT', reason: 'Please let this one through' })).status === 422, qtyException.body.match);
   const refused = await call('POST', `/invoices/${qtyException.body._id}/exception-decision`, t.finance, { decision: 'REJECT', reason: 'No goods have arrived yet' });
   check('Finance can reject an exception', refused.status === 200 && refused.body.status === 'REJECTED', refused.body);
 
@@ -678,13 +690,17 @@ async function main() {
   // ---- Services and commissioning ----------------------------------------------------------------
   const amc = await acceptedPo('Autoclave service visit', 'SERVICE', 2, 1000);
   check('a service line cannot be goods-received', /service/.test((await call('POST', '/grn', t.store, grnFor(amc.po, { receivedQty: 2, acceptedQty: 2 }))).body.message));
-  check('a service cannot be billed before sign-off', (await call('POST', '/invoices', t.vendor1, billOf(amc.po, 'GL-SVC0', 1))).status === 422);
+  const svcEarly = await call('POST', '/invoices', t.vendor1, billOf(amc.po, 'GL-SVC0', 1));
+  check('a service can be invoiced before sign-off; the match waits', svcEarly.status === 201 && svcEarly.body.status === 'SUBMITTED' && svcEarly.body.match.status === 'PENDING', svcEarly.body);
+  await call('POST', `/invoices/${svcEarly.body._id}/reject`, t.finance, { reason: 'Test of an early invoice' });
   const entry = await call('POST', '/service-entries', t.requester, { purchaseOrderId: amc.po._id, poItemId: amc.po.items[0]._id, quantity: 1, completedOn: new Date().toISOString(), remarks: 'First visit done' });
   check('the department records the service', entry.status === 201 && entry.body.type === 'SERVICE' && entry.body.status === 'PENDING', entry.body);
   check('it cannot be signed off beyond what was ordered', (await call('POST', '/service-entries', t.requester, { purchaseOrderId: amc.po._id, poItemId: amc.po.items[0]._id, quantity: 2, completedOn: new Date().toISOString() })).status === 422);
   check('another department HOD cannot accept', (await call('POST', `/service-entries/${entry.body._id}/accept`, t['hod.ops'], {})).status === 403);
-  check('a pending sign-off keeps it unbillable', (await call('POST', '/invoices', t.vendor1, billOf(amc.po, 'GL-SVC1', 1))).status === 422);
+  const svcWaiting = await call('POST', '/invoices', t.vendor1, billOf(amc.po, 'GL-SVC1', 1));
+  check('a pending sign-off keeps the invoice waiting', svcWaiting.status === 201 && svcWaiting.body.match.status === 'PENDING', svcWaiting.body);
   check('the HOD accepts', (await call('POST', `/service-entries/${entry.body._id}/accept`, t['hod.it'], {})).status === 200);
+  check('accepting the sign-off matches the waiting invoice by itself', (await call('GET', `/invoices/${svcWaiting.body._id}`, t.finance)).body.status === 'MATCHED');
   check('it can be accepted once', (await call('POST', `/service-entries/${entry.body._id}/accept`, t['hod.it'], {})).status === 422);
   check('accepted service is billable', (await call('POST', '/invoices', t.vendor1, billOf(amc.po, 'GL-SVC2', 1))).body.status === 'MATCHED');
   check('accepted service counts as received', (await call('GET', `/purchase-orders/${amc.po._id}`, t.procurement)).body.status === 'PARTIALLY_RECEIVED');
@@ -694,7 +710,9 @@ async function main() {
   const scanner = await acceptedPo('Ultrasound scanner', 'EQUIPMENT', 1, 2000);
   check('commissioning waits for delivery', (await call('POST', '/service-entries', t.store, { purchaseOrderId: scanner.po._id, poItemId: scanner.po.items[0]._id, quantity: 1, completedOn: new Date().toISOString() })).status === 422);
   await call('POST', '/grn', t.store, grnFor(scanner.po, { receivedQty: 1, acceptedQty: 1, serialNumbers: ['US-1'] }));
-  check('equipment cannot be billed before commissioning', (await call('POST', '/invoices', t.vendor1, billOf(scanner.po, 'GL-EQ1', 1))).status === 422);
+  const eqEarly = await call('POST', '/invoices', t.vendor1, billOf(scanner.po, 'GL-EQ1', 1));
+  check('equipment invoiced before commissioning waits', eqEarly.status === 201 && eqEarly.body.match.status === 'PENDING', eqEarly.body);
+  await call('POST', `/invoices/${eqEarly.body._id}/reject`, t.finance, { reason: 'Test of an early invoice' });
   const commissioning = await call('POST', '/service-entries', t.store, { purchaseOrderId: scanner.po._id, poItemId: scanner.po.items[0]._id, quantity: 1, completedOn: new Date().toISOString(), remarks: 'Installed and calibrated' });
   check('commissioning is recorded', commissioning.status === 201 && commissioning.body.type === 'COMMISSIONING', commissioning.body);
   await call('POST', `/service-entries/${commissioning.body._id}/accept`, t['hod.it'], {});
@@ -906,11 +924,14 @@ async function main() {
   check('another department HOD does not see it', !(await journeyFor('hod.ops')).tracks.some((tr: any) => tr.reference === lockPr.prNumber));
   check('Store sees no requisitions', !(await journeyFor('store')).tracks.some((tr: any) => tr.reference === lockPr.prNumber));
   const storePo = await acceptedPo('Journey Store', 'GOODS', 1, 10);
+  const storeBeforeInvoice = (await journeyFor('store')).tracks.find((tr: any) => tr.reference === storePo.po.poNumber);
+  check('before the vendor invoice, the Store waits for it', !!storeBeforeInvoice && !storeBeforeInvoice.yourAction && storeBeforeInvoice.steps.find((s: any) => s.state === 'current')?.label === 'Invoice', storeBeforeInvoice);
+  const storeInvoice = await call('POST', '/invoices', t.vendor1, billOf(storePo.po, 'J-STORE-1', 1));
   const storeTrack = (await journeyFor('store')).tracks.find((tr: any) => tr.reference === storePo.po.poNumber);
   check('Store sees receipt and inspection as their action', storeTrack?.yourAction && storeTrack.steps.some((s: any) => s.label === 'Goods receipt & inspection' && s.state === 'current') && !storeTrack.steps.some((s: any) => s.label === 'Quality inspection'), storeTrack);
   await call('POST', '/grn', t.store, grnFor(storePo.po, { receivedQty: 1, acceptedQty: 1 }));
   const financeTrack = (await journeyFor('finance')).tracks.find((tr: any) => tr.reference === storePo.po.poNumber);
-  check('invoice stages wait on the vendor, then Finance', financeTrack?.pendingAt?.role === 'VENDOR', financeTrack?.pendingAt);
+  check('after the GRN the waiting invoice is matched, and it is with Finance', financeTrack?.pendingAt?.role === 'FINANCE' && (await call('GET', `/invoices/${storeInvoice.body._id}`, t.finance)).body.status === 'MATCHED', financeTrack?.pendingAt);
 
   const jPr = await approvedPr('Journey privacy', 'GOODS', 1, 1000);
   const jRfq = await publishedRfq('Journey privacy RFQ', jPr._id);
@@ -928,7 +949,7 @@ async function main() {
   check('the winner sees they were selected and the PO received at once, with no staff names', winnerTrack?.steps.some((s: any) => s.label === 'Selected by the buyer' && s.state === 'done') && winnerTrack?.steps.some((s: any) => s.label === 'PO received' && s.state === 'done') && winnerTrack?.pendingAt.userName === undefined, winnerTrack);
   await approveAndIssue(jAward.body.po);
   const issuedTrack = (await journeyFor('vendor1')).tracks.find((tr: any) => tr.reference === jAward.body.po.poNumber);
-  check('once issued the PO goes to the Store, with no acknowledgement step', !issuedTrack?.yourAction && issuedTrack?.pendingAt.label === 'Store' && !issuedTrack.steps.some((s: any) => /cknowledge/.test(s.label)), issuedTrack);
+  check('once issued the vendor invoices first, with no acknowledgement step', issuedTrack?.yourAction && issuedTrack.actionLabel === 'Submit invoice' && !issuedTrack.steps.some((s: any) => /cknowledge/.test(s.label)), issuedTrack);
   const vendorJourneyText = JSON.stringify(await journeyFor('vendor1'));
   check('a vendor journey carries no internal names', !/Farhan|Priya|Harish|Sunil/.test(vendorJourneyText), vendorJourneyText.slice(0, 200));
   const vendorPoRow = ((await call('GET', '/purchase-orders', t.vendor1)).body as any[]).find((p) => p._id === jAward.body.po._id);
@@ -959,7 +980,9 @@ async function main() {
   const asset = await acceptedPo('MRI coil', 'CAPITAL_EQUIPMENT', 1, 5000);
   check('capital equipment needs serials, like equipment', (await call('POST', '/grn', t.store, grnFor(asset.po, { receivedQty: 1, acceptedQty: 1 }))).status === 422);
   await call('POST', '/grn', t.store, grnFor(asset.po, { receivedQty: 1, acceptedQty: 1, serialNumbers: ['COIL-1'] }));
-  check('and cannot be billed before commissioning', (await call('POST', '/invoices', t.vendor1, billOf(asset.po, 'GL-ASSET0', 1))).status === 422);
+  const assetEarly = await call('POST', '/invoices', t.vendor1, billOf(asset.po, 'GL-ASSET0', 1));
+  check('and an invoice before commissioning waits', assetEarly.status === 201 && assetEarly.body.match.status === 'PENDING', assetEarly.body);
+  await call('POST', `/invoices/${assetEarly.body._id}/reject`, t.finance, { reason: 'Test of an early invoice' });
   const assetSignOff = await call('POST', '/service-entries', t.store, { purchaseOrderId: asset.po._id, poItemId: asset.po.items[0]._id, quantity: 1, completedOn: new Date().toISOString() });
   check('capital equipment is commissioned like equipment', assetSignOff.body.type === 'COMMISSIONING', assetSignOff.body);
   await call('POST', `/service-entries/${assetSignOff.body._id}/accept`, t['hod.it'], {});
@@ -1291,12 +1314,22 @@ async function main() {
   const labelBid = await placeBid(labelRfq, 'vendor1', 190000);
   const withBids = await journeyCard('procurement', labelPr._id);
   check('bidding open with a bid in: Close bid & select vendor', withBids?.yourAction && withBids.actionLabel === 'Close bid & select vendor', withBids);
+  const openBidding = withBids.steps.find((st: any) => st.label === 'Bidding');
+  check('while bidding is open the Bidding step shows when it ends', openBidding?.detail === labelRfq.rfqNumber && openBidding.deadline?.label === 'Ends' && new Date(openBidding.deadline.at).getTime() === new Date(labelRfq.closeAt).getTime(), openBidding);
+  for (const who of ['requester', 'hod.it', 'finance', 'admin', 'auditor']) {
+    const theirs = (await journeyCard(who, labelPr._id))?.steps?.find((st: any) => st.label === 'Bidding');
+    check(`${who} sees the same bidding end date`, theirs?.deadline?.label === 'Ends' && theirs.deadline.at === openBidding.deadline.at, theirs);
+  }
+  const vendorBidding = ((await journeyFor('vendor1')).tracks as any[]).find((tr) => tr.rfqId === labelRfq._id)?.steps.find((st: any) => st.label === 'Bidding closed');
+  check('the vendor sees when bidding ends on their card', vendorBidding?.deadline?.label === 'Ends' && vendorBidding.deadline.at === openBidding.deadline.at, vendorBidding);
   check('…and the dashboard card says the same', (await cardFor('procurement', labelPr.prNumber))?.actionLabel === 'Close bid & select vendor');
   const hodDuringBids = await journeyCard('hod.it', labelPr._id);
   check('the HOD does not see Procurement\'s selection as their action', !!hodDuringBids && !hodDuringBids.yourAction && hodDuringBids.actionLabel === undefined, hodDuringBids);
   await call('POST', `/sourcing/rfqs/${labelRfq._id}/close`, t.procurement);
   const afterClose = await journeyCard('procurement', labelPr._id);
   check('bidding closed, no vendor yet: Select vendor', afterClose?.yourAction && afterClose.actionLabel === 'Select vendor', afterClose);
+  check('once closed the Bidding step says Closed with its date', afterClose.steps.find((st: any) => st.label === 'Bidding')?.deadline?.label === 'Closed', afterClose.steps.find((st: any) => st.label === 'Bidding'));
+  check('…and so does the vendor\'s card', ((await journeyFor('vendor1')).tracks as any[]).find((tr) => tr.rfqId === labelRfq._id)?.steps.find((st: any) => st.label === 'Bidding closed')?.deadline?.label === 'Closed');
   const emptyPr = await approvedPr('No bids label', 'GOODS', 1, 100);
   const emptyRfq = await publishedRfq('No bids label RFQ', emptyPr._id);
   await call('POST', `/sourcing/rfqs/${emptyRfq._id}/close`, t.procurement);
@@ -1318,11 +1351,60 @@ async function main() {
   const bidRfq = await publishedRfq('Bid label RFQ', (await approvedPr('Bid label', 'GOODS', 1, 100))._id);
   const vendorBidCard = ((await journeyFor('vendor2')).tracks as any[]).find((tr) => tr.rfqId === bidRfq._id);
   check('a vendor with an open RFQ is told to submit a bid', vendorBidCard?.yourAction && vendorBidCard.actionLabel === 'Submit bid', vendorBidCard);
-  const grnLabelPo = (await acceptedPo('GRN label', 'GOODS', 1, 100)).po;
+  const grnLabel = await acceptedPo('GRN label', 'GOODS', 1, 100);
+  const grnLabelPo = grnLabel.po;
+  const storeWaitsInvoice = await cardFor('store', grnLabelPo.poNumber);
+  check('the Store waits for the vendor invoice first', !!storeWaitsInvoice && !storeWaitsInvoice.yourAction && /vendor/i.test(storeWaitsInvoice.message), storeWaitsInvoice);
+  check('the vendor is told to submit the invoice', (await cardFor('vendor1', grnLabelPo.poNumber))?.actionLabel === 'Submit invoice');
+  await call('POST', '/invoices', t.vendor1, billOf(grnLabelPo, 'GRN-LABEL-1', 1));
   const storeLabelCard = await cardFor('store', grnLabelPo.poNumber);
   check('the Store is told to record the GRN', storeLabelCard?.yourAction && storeLabelCard.actionLabel === 'Record GRN', storeLabelCard);
-  const financeWaitsGrn = await cardFor('finance', grnLabelPo.poNumber);
+  const financeWaitsGrn = await journeyCard('finance', grnLabel.pr._id);
   check('Finance waits for the GRN instead', !!financeWaitsGrn && !financeWaitsGrn.yourAction && /Store/.test(financeWaitsGrn.message), financeWaitsGrn);
+
+  // ---- Vendor invoice before the GRN, per PO, with GRN photos ------------------------------------------
+  const isoA = await acceptedPo('Isolation A', 'GOODS', 3, 100);
+  const poA = isoA.po;
+  const poB = (await acceptedPo('Isolation B', 'GOODS', 5, 200)).po;
+  const rowsFor = async (who: string) => (await call('GET', '/purchase-orders', t[who])).body as any[];
+  const rowOf = (rows: any[], po: any) => rows.find((r) => r._id === po._id);
+  let vendorRows = await rowsFor('vendor1');
+  check('each issued PO offers its own Submit Invoice, with its own open quantities', rowOf(vendorRows, poA)?.canInvoice && rowOf(vendorRows, poB)?.canInvoice && rowOf(vendorRows, poA).items[0].openToInvoiceQty === 3 && rowOf(vendorRows, poB).items[0].openToInvoiceQty === 5, [rowOf(vendorRows, poA)?.items, rowOf(vendorRows, poB)?.items]);
+  check('nothing to receive before the vendor invoices', !rowOf(await rowsFor('store'), poA)?.invoiceToReceive && !rowOf(await rowsFor('store'), poB)?.invoiceToReceive);
+  check('boxes on paperwork must be a whole number of 0 or more', (await call('POST', '/invoices', t.vendor1, { ...billOf(poA, 'ISO-A-BAD', 3), boxesOnPaperwork: -1 })).status === 422);
+  const invA = await call('POST', '/invoices', t.vendor1, { ...billOf(poA, 'ISO-A-1', 3), boxesOnPaperwork: 4 });
+  check('the invoice keeps the boxes on its paperwork', invA.body.boxesOnPaperwork === 4, invA.body.boxesOnPaperwork);
+  check('the vendor invoices PO A before any GRN; it waits at the Store', invA.status === 201 && invA.body.match.status === 'PENDING', invA.body);
+  check('the invoice list shows it pending at the Store', ((await call('GET', '/invoices', t.vendor1)).body as any[]).find((i) => i._id === invA.body._id)?.pendingAt?.role === 'STORE');
+  vendorRows = await rowsFor('vendor1');
+  check('PO A has nothing left to invoice; PO B still does', !rowOf(vendorRows, poA).canInvoice && rowOf(vendorRows, poB).canInvoice && rowOf(vendorRows, poB).items[0].openToInvoiceQty === 5, [rowOf(vendorRows, poA).canInvoice, rowOf(vendorRows, poB).canInvoice]);
+  let storeRows = await rowsFor('store');
+  check('the Store receives PO A against its own invoice, and nothing yet on PO B', rowOf(storeRows, poA)?.invoiceToReceive?.invoiceNumber === 'ISO-A-1' && rowOf(storeRows, poA).invoiceToReceive.items[0].quantity === 3 && rowOf(storeRows, poA).invoiceToReceive.items[0].poItem === poA.items[0]._id && !rowOf(storeRows, poB).invoiceToReceive, [rowOf(storeRows, poA)?.invoiceToReceive, rowOf(storeRows, poB)?.invoiceToReceive]);
+  const invB = await call('POST', '/invoices', t.vendor1, { ...billOf(poB, 'ISO-B-1', 5), boxesOnPaperwork: 7 });
+  storeRows = await rowsFor('store');
+  check('each PO\'s GRN starts from its own invoice\'s boxes: A 4, B 7', rowOf(storeRows, poA).invoiceToReceive.boxesOnPaperwork === 4 && rowOf(storeRows, poB).invoiceToReceive.boxesOnPaperwork === 7, [rowOf(storeRows, poA).invoiceToReceive, rowOf(storeRows, poB).invoiceToReceive]);
+  const viewA = rowOf(storeRows, poA).invoices;
+  const viewB = rowOf(storeRows, poB).invoices;
+  check('View Invoice on PO A shows only PO A\'s bill', viewA?.length === 1 && viewA[0].invoiceNumber === 'ISO-A-1' && viewA[0].boxesOnPaperwork === 4 && viewA[0].items.length === 1 && viewA[0].items[0].quantity === 3 && viewA[0].items[0].unitPrice === 100 && viewA[0].items[0].taxRate === 18 && viewA[0].subtotal === 300 && viewA[0].gstAmount === 54 && viewA[0].total === 354 && !!viewA[0].internalRef && !!viewA[0].invoiceDate && !!viewA[0].status, viewA);
+  check('View Invoice on PO B shows only PO B\'s bill', viewB?.length === 1 && viewB[0].invoiceNumber === 'ISO-B-1' && viewB[0].boxesOnPaperwork === 7 && viewB[0].total === 1180, viewB);
+  check('only the Store gets the invoice view on PO rows', rowOf(await rowsFor('vendor1'), poA).invoices === undefined && rowOf(await rowsFor('finance'), poA).invoices === undefined);
+  check('the Store still has no Invoices tab access', (await call('GET', '/invoices', t.store)).status === 403);
+  check('each PO keeps its own invoice: A with ISO-A-1, B with ISO-B-1', rowOf(storeRows, poA).invoiceToReceive.invoiceNumber === 'ISO-A-1' && rowOf(storeRows, poB).invoiceToReceive.invoiceNumber === 'ISO-B-1' && rowOf(storeRows, poB).invoiceToReceive.items[0].quantity === 5 && rowOf(storeRows, poB).invoiceToReceive.items[0].poItem === poB.items[0]._id, [rowOf(storeRows, poA).invoiceToReceive, rowOf(storeRows, poB).invoiceToReceive]);
+  check('the Store is told to record each GRN', (await cardFor('store', poA.poNumber))?.actionLabel === 'Record GRN' && (await cardFor('store', poB.poNumber))?.actionLabel === 'Record GRN');
+
+  const PHOTO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
+  check('a GRN photo must be an image', (await call('POST', '/grn', t.store, { ...grnFor(poA, { receivedQty: 3, acceptedQty: 3 }, 'ISO-A-1'), photos: ['data:text/html;base64,PGI+aGk8L2I+'] })).status === 422);
+  const grnA = await call('POST', '/grn', t.store, { ...grnFor(poA, { receivedQty: 3, acceptedQty: 3 }, 'ISO-A-1'), photos: [PHOTO, PHOTO.replace('image/png', 'image/jpeg')] });
+  check('the GRN keeps its photos', grnA.status === 201 && grnA.body.photos.length === 2 && grnA.body.photos[0] === PHOTO, grnA.body.photos?.length);
+  check('the recorded GRN shows its photos to the Store and the Auditor', ((await call('GET', '/grn', t.store)).body as any[]).find((g) => g._id === grnA.body._id)?.photos.length === 2 && ((await call('GET', '/grn', t.auditor)).body as any[]).find((g) => g._id === grnA.body._id)?.photos.length === 2);
+  check('a GRN without photos still works and has none', (await call('GET', '/grn', t.store)).body.every((g: any) => Array.isArray(g.photos)));
+  check('the GRN on PO A matches its waiting invoice by itself', (await call('GET', `/invoices/${invA.body._id}`, t.finance)).body.status === 'MATCHED');
+  check('…and leaves PO B\'s invoice waiting', (await call('GET', `/invoices/${invB.body._id}`, t.finance)).body.match.status === 'PENDING');
+  storeRows = await rowsFor('store');
+  check('PO A has nothing left to receive; PO B still has its own', !rowOf(storeRows, poA)?.invoiceToReceive && rowOf(storeRows, poB).invoiceToReceive.invoiceNumber === 'ISO-B-1', [rowOf(storeRows, poA)?.invoiceToReceive, rowOf(storeRows, poB)?.invoiceToReceive]);
+  check('after the GRN, PO A\'s invoice can still be viewed', rowOf(storeRows, poA).invoices?.[0]?.invoiceNumber === 'ISO-A-1', rowOf(storeRows, poA).invoices);
+  const grnBPartial = await call('POST', '/grn', t.store, grnFor(poB, { receivedQty: 2, acceptedQty: 2, shortageReason: 'Balance to follow' }, 'ISO-B-1'));
+  check('a partial receipt leaves the rest of the invoice to receive', grnBPartial.status === 201 && rowOf(await rowsFor('store'), poB).invoiceToReceive.items[0].quantity === 3, rowOf(await rowsFor('store'), poB)?.invoiceToReceive);
 
   // Every role: an action card has an instruction, never a bare step name; any other card has none.
   const BARE_STEPS = ['Bidding', 'Bidding closed', 'Closed', 'Short-closed', 'PR raised', 'RFQ published', 'Vendor selected', 'PO generated', 'Goods receipt & inspection', 'Invoice', 'RFQ received'];

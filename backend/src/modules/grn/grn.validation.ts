@@ -14,6 +14,8 @@ export const createGrnSchema = z
       boxesCounted: z.number().int().nonnegative(),
     }),
     qcRemarks: z.string().trim().optional(),
+    /** Optional photos of the delivery: JPEG, PNG or WebP data URLs */
+    photos: z.array(z.string().regex(/^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/=]+$/, 'A photo must be a JPEG, PNG or WebP image')).default([]),
     items: z
       .array(
         z

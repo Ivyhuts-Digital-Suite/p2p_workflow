@@ -5,7 +5,7 @@ import { navItemsFor } from '../config/navigation';
 import { useAuth } from '../context/AuthContext';
 import { useApi } from '../hooks/useApi';
 import type { ChatUnread, JourneyStep, JourneyTrack, PendingAt } from '../types';
-import { formatMoney } from '../utils/format';
+import { formatDate, formatMoney } from '../utils/format';
 import { Modal } from './overlays';
 import { CHAT_READ_EVENT, PrChat, VendorChat } from './PrChat';
 import { Card, Empty, ErrorBanner } from './ui';
@@ -46,7 +46,9 @@ function Step({ step }: { step: JourneyStep }) {
         {/* One status per step: what is pending, or what was done. A step not reached yet shows just its name. */}
         {step.state === 'locked' ? step.label : step.status}
         <span className="sr-only"> ({STATE_LABEL[step.state]})</span>
-        {step.detail && <span className="step-detail">{step.detail}</span>}
+        {(step.detail || step.deadline) && (
+          <span className="step-detail">{[step.detail, step.deadline && `${step.deadline.label} ${formatDate(step.deadline.at)}`].filter(Boolean).join(' · ')}</span>
+        )}
       </span>
     </li>
   );
@@ -67,8 +69,10 @@ function toStages(steps: JourneyStep[]) {
 function taskPage(step: string, isVendor: boolean): string | null {
   if (step === 'Payment approval') return '#payment-approvals';
   if (['Tax verification', 'Payment release', 'Emergency ratification'].includes(step)) return '/treasury';
-  if (step === 'Invoice' || step === 'Invoice verification & 3-way match') return '/invoices';
-  if (step === 'Goods receipt & inspection') return '/grn';
+  // The vendor invoices, and the Store records the GRN, from each PO's row on Purchase Orders.
+  if (step === 'Invoice') return isVendor ? '/purchase-orders' : '/invoices';
+  if (step === 'Invoice verification & 3-way match') return '/invoices';
+  if (step === 'Goods receipt & inspection') return '/purchase-orders';
   if (step === 'Service sign-off' || step === 'Commissioning sign-off') return '/service-entries';
   if (['PO generated', 'PO received', 'Closed'].includes(step)) return '/purchase-orders';
   if (step === 'Bid submitted' || step === 'Bidding closed') return isVendor ? '/vendor/rfqs' : '/sourcing';

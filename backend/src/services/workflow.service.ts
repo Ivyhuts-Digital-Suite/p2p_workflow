@@ -96,6 +96,8 @@ export function poPendingAt(po: IPurchaseOrder, at: Directory): PendingAt | unde
 }
 
 export function invoicePendingAt(invoice: IInvoice, at: Directory): PendingAt | undefined {
+  // Submitted ahead of the goods: the Store records the GRN before Finance can match it.
+  if (invoice.status === INVOICE_STATUS.SUBMITTED && invoice.match?.status === 'PENDING') return at(ROLES.STORE);
   switch (invoice.status) {
     case INVOICE_STATUS.SUBMITTED:
     case INVOICE_STATUS.MATCHED:

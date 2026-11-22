@@ -154,6 +154,7 @@ export const grnApi = {
     deliveryNoteNumber: string;
     physicalCheck: { boxesExpected: number; boxesCounted: number };
     qcRemarks?: string;
+    photos?: string[];
     items: {
       poItemId: string;
       receivedQty: number;
@@ -201,6 +202,7 @@ export const invoiceApi = {
     invoiceNumber: string;
     invoiceDate: string;
     claimedTotal: number;
+    boxesOnPaperwork?: number;
     items: { poItemId: string; quantity: number; unitPrice: number; taxRate: number }[];
   }) => data<Invoice>(api.post('/invoices', body)),
   match: (id: string) => data<Invoice>(api.post(`/invoices/${id}/match`)),

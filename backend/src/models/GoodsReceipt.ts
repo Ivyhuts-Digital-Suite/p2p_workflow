@@ -40,6 +40,8 @@ export interface IGoodsReceipt {
   items: IGrnItem[];
   status: GrnStatus;
   qcRemarks?: string;
+  /** Optional photos of the delivered goods, packaging or delivery challan, as image data URLs */
+  photos: string[];
   receivedBy: Types.ObjectId;
   receivedAt: Date;
 }
@@ -77,6 +79,7 @@ const grnSchema = new Schema<IGoodsReceipt>(
     items: [grnItemSchema],
     status: { type: String, enum: enumValues(GRN_STATUS), required: true },
     qcRemarks: String,
+    photos: { type: [String], default: [] },
     receivedBy: { type: Schema.Types.ObjectId, ref: 'User', required: true },
     receivedAt: { type: Date, default: Date.now },
   },

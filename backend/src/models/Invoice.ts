@@ -84,6 +84,8 @@ export interface IInvoice {
   total: number;
   /** Gross amount printed on the vendor's invoice - compared against computed total */
   claimedTotal: number;
+  /** Boxes / cartons the vendor's paperwork says were dispatched; the Store counts them at receipt */
+  boxesOnPaperwork: number;
   match: {
     status: MatchStatus;
     exceptions: IMatchException[];
@@ -125,6 +127,7 @@ const invoiceSchema = new Schema<IInvoice>(
     gstAmount: { type: Number, default: 0 },
     total: { type: Number, default: 0 },
     claimedTotal: { type: Number, required: true, min: 0 },
+    boxesOnPaperwork: { type: Number, default: 0, min: 0 },
     match: {
       status: { type: String, enum: enumValues(MATCH_STATUS), default: MATCH_STATUS.PENDING },
       exceptions: [

@@ -20,7 +20,7 @@ const ROLE_GUIDE: Record<Role, string[]> = {
   ADMIN: ['Oversight of every module', 'Manage users, departments, budgets and DoA rules under Administration'],
 };
 
-const FLOW = ['PR & budget lock', 'Sourcing & bidding', 'PO & DoA approval', 'Store GRN & inspection', 'Finance 3-way match', 'Tax & payment release'];
+const FLOW = ['PR & budget lock', 'Sourcing & bidding', 'PO & DoA approval', 'Vendor invoice', 'Store GRN & inspection', 'Finance 3-way match', 'Tax & payment release'];
 
 /** High-value payments waiting on the caller's approval, for approvers who don't work in Finance. */
 function PaymentApprovals() {
