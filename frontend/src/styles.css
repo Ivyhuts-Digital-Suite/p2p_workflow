@@ -274,4 +274,4 @@ legend { font-weight: 600; padding: 0 6px; }
 .photo-viewer img { display: block; max-width: none; margin: 0 auto; }
 .photo-thumb-pick { padding: 0; border: 2px solid transparent; border-radius: 8px; background: none; cursor: pointer; }
 .photo-thumb-pick.active { border-color: var(--primary, #2952e3); }
-
+.table-scroll { overflow-x: auto; max-width: 100%; }

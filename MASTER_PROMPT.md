@@ -519,3 +519,9 @@ Build the project for Vercel and list the environment variables it needs.
 - The GRN # expand stays as it was.
 - Run the typecheck, end-to-end tests and build, then commit all accumulated changes (Phases 35–37) and push to `main`.
 
+## Phase 38: Recent GRNs table must not overflow its card (22 Nov)
+
+- On `/grn`, the Recent GRNs table ran past its card's right edge, hiding the Photos column and its View Photos (N) button.
+- Fix: the table scrolls horizontally inside the card, and the Photos column sits right after GRN #. Nothing else changes.
+- Run the typecheck and build, then commit and push to `main`.
+

@@ -182,10 +182,12 @@ export function GoodsReceiptPage() {
           {!grns.data?.length ? (
             <Empty>No goods receipts yet.</Empty>
           ) : (
+            <div className="table-scroll">
             <table className="table">
               <thead>
                 <tr>
                   <th>GRN #</th>
+                  <th>Photos</th>
                   <th>PO</th>
                   <th>Vendor</th>
                   <th>Items</th>
@@ -193,7 +195,6 @@ export function GoodsReceiptPage() {
                   <th>Boxes</th>
                   <th>Date</th>
                   <th>Status</th>
-                  <th>Photos</th>
                 </tr>
               </thead>
               <tbody>
@@ -205,6 +206,13 @@ export function GoodsReceiptPage() {
                           {g.grnNumber}
                         </button>
                       </td>
+                      <td>
+                        {!!g.photos?.length && (
+                          <button type="button" className="btn btn-sm" onClick={() => setViewingPhotos(g)}>
+                            View Photos ({g.photos.length})
+                          </button>
+                        )}
+                      </td>
                       <td className="mono">{g.purchaseOrder?.poNumber}</td>
                       <td>{g.vendor?.companyName}</td>
                       <td>{g.items.map((l) => `${productName(l)} × ${l.receivedQty}`).join(', ')}</td>
@@ -213,13 +221,6 @@ export function GoodsReceiptPage() {
                       <td>{formatDate(g.receivedAt)}</td>
                       <td>
                         <StatusBadge status={g.status} />
-                      </td>
-                      <td>
-                        {!!g.photos?.length && (
-                          <button type="button" className="btn btn-sm" onClick={() => setViewingPhotos(g)}>
-                            View Photos ({g.photos.length})
-                          </button>
-                        )}
                       </td>
                     </tr>
                     {expanded === g._id && (
@@ -266,6 +267,7 @@ export function GoodsReceiptPage() {
                 ))}
               </tbody>
             </table>
+            </div>
           )}
         </Card>
         <Card title="Inventory">
